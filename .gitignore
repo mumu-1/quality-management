@@ -1,0 +1,18 @@
+# 数据库文件（演示库可随时用 scripts/init_db.py 重建）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 备份
+backups/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

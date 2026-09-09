@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生产质量管理系统 · 界面原型（可点击演示）</title>
+<style>
+/* ===== 商务克制风格：白卡片 + 细边框 + 浅色图标块 + 低饱和点缀 ===== */
+:root{
+  --bg1:#eaf2fb; --bg2:#e6eff9;
+  --accent:#2f9df4; --accent2:#57b8ff;
+  --border:#e3edf8; --text:#1f2d3d; --text-sub:#8aa3c4;
+  --ok:#2eb872; --warn:#e6a23c; --bad:#e05252;
+  --card:#ffffff;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei",system-ui,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);min-height:100vh}
+/* 顶部总导航 */
+.topbar{display:flex;align-items:center;gap:12px;padding:0 18px;height:54px;background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff;position:sticky;top:0;z-index:50}
+.topbar .logo{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+.topbar .logo .ic{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:16px}
+.top-links{margin-left:16px;display:flex;gap:6px}
+.top-link{color:#fff;text-decoration:none;background:rgba(255,255,255,.16);padding:5px 12px;border-radius:14px;font-size:12.5px;cursor:pointer;border:none}
+.top-link:hover{background:rgba(255,255,255,.32)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px}
+.top-right .avatar{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center}
+.btn-quit{background:rgba(255,255,255,.16);border:none;color:#fff;padding:5px 12px;border-radius:14px;cursor:pointer;font-size:12.5px}
+/* 主体三段式 */
+.layout{display:flex;min-height:calc(100vh - 54px)}
+/* 左侧折叠菜单 */
+.sidebar{width:216px;background:#fff;border-right:1px solid var(--border);padding:10px 8px;overflow-y:auto;flex-shrink:0}
+.menu-group{padding:9px 12px;font-size:12.5px;color:var(--text-sub);cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:8px;user-select:none}
+.menu-group:hover{background:#f2f8fe;color:var(--accent)}
+.menu-group .arrow{font-size:10px;transition:transform .2s}
+.menu-group.open .arrow{transform:rotate(90deg)}
+.group-items{display:none;margin:2px 0 6px}
+.group-items.open{display:block}
+.menu-item{padding:8px 12px 8px 26px;font-size:13px;border-radius:8px;cursor:pointer;color:#4a5a72;margin:1px 0}
+.menu-item:hover{background:#f2f8fe;color:var(--accent)}
+.menu-item.active{background:linear-gradient(90deg,#e3f2ff,#f0f8ff);color:var(--accent);font-weight:600}
+/* 右侧内容 */
+.content{flex:1;padding:18px 22px;overflow-x:auto}
+.page{display:none}
+.page.active{display:block;animation:fade .25s}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.page-title{font-size:18px;font-weight:700;margin-bottom:4px}
+.page-desc{font-size:13px;color:var(--text-sub);margin-bottom:16px}
+/* 卡片 */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(31,90,150,.05)}
+.stat-card .lab{font-size:12.5px;color:var(--text-sub)}
+.stat-card .val{font-size:24px;font-weight:700;margin:4px 0 2px}
+.stat-card .sub{font-size:12px;color:var(--text-sub)}
+.stat-card .val.good{color:var(--ok)} .stat-card .val.bad{color:var(--bad)} .stat-card .val.warn{color:var(--warn)} .stat-card .val.blue{color:var(--accent)}
+/* 模块卡片 */
+.module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:8px}
+.module-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:.15s;box-shadow:0 1px 3px rgba(31,90,150,.05)}
+.module-card:hover{border-color:var(--accent2);transform:translateY(-2px);box-shadow:0 4px 10px rgba(31,90,150,.08)}
+.module-card:active{transform:scale(.98)}
+.module-card .m-ico{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:10px}
+.m-ico.i1{background:#e8f4ff}.m-ico.i2{background:#e6f9f0}.m-ico.i3{background:#fdf3e3}.m-ico.i4{background:#fdecef}.m-ico.i5{background:#efe9fd}.m-ico.i6{background:#e8f8f6}
+.module-card .m-name{font-size:15px;font-weight:700;margin-bottom:4px}
+.module-card .m-desc{font-size:12.5px;color:var(--text-sub);line-height:1.5}
+/* 面板/表单 */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+.panel h3{font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.form-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:8px}
+.field label{display:block;font-size:12px;color:var(--text-sub);margin-bottom:4px}
+.field input,.field select{height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px;font-size:13px;min-width:150px;outline:none;background:#fff;color:var(--text)}
+.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(47,157,244,.15)}
+/* 表格 */
+.tbl-wrap{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+th{background:#f7fafd;color:#5a7188;font-weight:600;text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+td{padding:9px 12px;border-bottom:1px solid #f0f5fa}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f7fbfe}
+.tag{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px}
+.tag-ok{background:#e6f9f0;color:var(--ok)} .tag-bad{background:#fdecef;color:var(--bad)}
+.tag-warn{background:#fdf3e3;color:var(--warn)} .tag-blue{background:#e8f4ff;color:var(--accent)}
+.tag-gray{background:#eef2f7;color:#7b8ca3}
+/* 按钮 */
+.btn{border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer}
+.btn-p{background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff}
+.btn-p:hover{filter:brightness(1.05)}
+.btn-o{background:#fff;border:1px solid #d6e4f3;color:#3d5a80}
+.btn-o:hover{border-color:var(--accent);color:var(--accent)}
+.btn-s{background:#e6f9f0;color:var(--ok);border:1px solid #bfe8d5}
+.btn-sm{padding:5px 10px;font-size:12px;border-radius:7px}
+/* 弹窗 */
+.modal-mask{display:none;position:fixed;inset:0;background:rgba(20,40,70,.4);z-index:100;align-items:center;justify-content:center}
+.modal-mask.show{display:flex}
+.modal{background:#fff;border-radius:14px;width:640px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:20px}
+.modal h3{font-size:15px;margin-bottom:12px}
+.close-x{float:right;cursor:pointer;color:var(--text-sub);font-size:18px}
+/* 步骤条 */
+.steps{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.step{display:flex;gap:10px;align-items:flex-start;background:#f8fbfe;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.step .st-ico{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;margin-top:1px}
+.step.done .st-ico{background:#e6f9f0;color:var(--ok)}
+.step.todo .st-ico{background:#eef2f7;color:#9aabc0}
+.step .st-name{font-size:13px;font-weight:600}
+.step .st-time{font-size:12px;color:var(--text-sub);margin-top:2px}
+.step.todo .st-name{color:#9aabc0;font-weight:400}
+/* 提示条 */
+.alertbar{border-radius:10px;padding:10px 14px;font-size:13px;margin:10px 0}
+.alert-ok{background:#e6f9f0;border:1px solid #bfe8d5;color:#1e7a4f}
+.alert-bad{background:#fdecef;border:1px solid #f5c6cc;color:#b03434}
+.alert-info{background:#e8f4ff;border:1px solid #c4e2fb;color:#1d6fb8}
+/* 检验项编辑行 */
+.item-row{display:grid;grid-template-columns:1.4fr 1fr .9fr 1fr .8fr;gap:8px;align-items:center;background:#f8fbfe;border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:8px;font-size:13px}
+.item-row input{height:32px;border:1px solid #d6e4f3;border-radius:8px;padding:0 8px;font-size:13px;width:100%;outline:none}
+.item-row input:focus{border-color:var(--accent)}
+.item-row .res{font-weight:700;font-size:13px}
+.res-pass{color:var(--ok)} .res-fail{color:var(--bad)} .res-wait{color:#9aabc0}
+/* 追溯链 */
+.chain{margin-top:8px}
+.chain-node{display:flex;gap:12px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-left:4px solid var(--accent2);border-radius:8px;margin-bottom:8px;font-size:13px}
+.chain-node.raw{border-left-color:var(--ok)} .chain-node.fail{border-left-color:var(--bad)}
+.chain-node .cn-k{color:var(--text-sub);min-width:70px}
+/* 移动端示意框 */
+.m-phone{width:340px;margin:0 auto;border-radius:28px;background:#f2f6fb;border:6px solid #dce6f2;overflow:hidden;box-shadow:0 8px 24px rgba(31,90,150,.18)}
+.m-appbar{background:#fff;padding:12px 14px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.m-user{margin-left:auto;background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff;font-size:11px;border-radius:20px;padding:4px 10px;font-weight:400}
+.m-tabs{display:flex;background:#fff;border-top:1px solid var(--border);padding:6px 0 8px}
+.m-tab{flex:1;text-align:center;font-size:10.5px;color:#9aabc0;padding:3px 0;cursor:pointer}
+.m-tab .t-ic{font-size:17px;display:block}
+.m-tab.on{color:var(--accent);font-weight:600}
+.m-body{padding:12px;height:430px;overflow-y:auto}
+.m-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;font-size:12.5px}
+.m-card .t{font-weight:700;font-size:13px;margin-bottom:6px}
+/* 打印提示 */
+.note-bar{font-size:12px;color:var(--text-sub);background:#f8fbfe;border:1px dashed #d6e4f3;border-radius:8px;padding:6px 12px;margin:8px 0}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cfe0f2;border-radius:4px}
+</style>
+</head>
+<body>
+
+<!-- ═══════ 顶部总导航 ═══════ -->
+<div class="topbar">
+  <div class="logo"><span class="ic">🏭</span>生产质量管理系统 <span style="font-weight:400;font-size:12px;opacity:.85">原型演示</span></div>
+  <div class="top-links">
+    <button class="top-link" onclick="openPage('page-mobile')">📱 移动端</button>
+    <button class="top-link" onclick="alert('数据大屏（深色看板）在正式版中提供')">📺 数据大屏</button>
+    <button class="top-link" onclick="alert('客户扫码页在正式版中提供')">🔍 客户扫码</button>
+  </div>
+  <div class="top-right">
+    <span class="avatar">👤</span><span>张经理 · 质量部</span>
+    <button class="btn-quit" onclick="alert('正式版中点击退出登录')">退出</button>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- ═══════ 左侧折叠导航 ═══════ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="menu-group open" onclick="tg(this)"><span>📊 工作台</span><span class="arrow">▶</span></div>
+    <div class="group-items open" id="grp-work">
+      <div class="menu-item active" data-p="page-dashboard" onclick="openPage('page-dashboard')">质量总览</div>
+    </div>
+    <div class="menu-group" onclick="tg(this)"><span>🔬 检验管理</span><span class="arrow">▶</span></div>
+    <div class="group-items" id="grp-qc">
+      <div class="menu-item" data-p="page-iqc" onclick="openPage('page-iqc')">🧪 来料检验（IQC）</div>
+      <div class="menu-item" data-p="page-ipqc" onclick="openPage('page-ipqc')">🏭 过程检验（IPQC）</div>
+      <div class="menu-item" data-p="page-oqc" onclick="openPage('page-oqc')">📦 成品检验（OQC）</div>
+      <div class="menu-item" data-p="page-testlist" onclick="openPage('page-testlist')">📋 检验记录</div>
+    </div>
+    <div class="menu-group" onclick="tg(this)"><span>🏅 不合格处理</span><span class="arrow">▶</span></div>
+    <div class="group-items" id="grp-ncr">
+      <div class="menu-item" data-p="page-ncr" onclick="openPage('page-ncr')">⚠️ NCR 处理单</div>
+    </div>
+    <div class="menu-group" onclick="tg(this)"><span>🔍 质量追溯</span><span class="arrow">▶</span></div>
+    <div class="group-items" id="grp-trace">
+      <div class="menu-item" data-p="page-trace" onclick="openPage('page-trace')">🔗 批次追溯</div>
+    </div>
+    <div class="menu-group" onclick="tg(this)"><span>📈 报表分析</span><span class="arrow">▶</span></div>
+    <div class="group-items" id="grp-report">
+      <div class="menu-item" data-p="page-report" onclick="openPage('page-report')">📊 质量报表</div>
+    </div>
+    <div class="menu-group" onclick="tg(this)"><span>📚 基础数据</span><span class="arrow">▶</span></div>
+    <div class="group-items" id="grp-base">
+      <div class="menu-item" data-p="page-base" onclick="openPage('page-base')">标准库 / 物料 / 人员</div>
+    </div>
+  </aside>
+
+  <!-- ═══════ 右侧内容 ═══════ -->
+  <main class="content">
+
+    <!-- ── 工作台：质量总览 ── -->
+    <section class="page active" id="page-dashboard">
+      <div class="page-title">质量总览</div>
+      <div class="page-desc">早上好，张经理！这是今天的质量概况（原型演示数据）</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="lab">本月来料检验</div><div class="val blue">186 <span style="font-size:13px;color:var(--ok)">批</span></div><div class="sub">合格率 96.2%</div></div>
+        <div class="stat-card"><div class="lab">本月过程检验</div><div class="val blue">742 批</div><div class="sub">一次合格率 98.1%</div></div>
+        <div class="stat-card"><div class="lab">本月成品检验</div><div class="val good">356 批</div><div class="sub">合格率 99.4%</div></div>
+        <div class="stat-card"><div class="lab">待处理 NCR</div><div class="val bad">7 张</div><div class="sub">其中超 3 天未处理 2 张</div></div>
+        <div class="stat-card"><div class="lab">本月客诉</div><div class="val warn">2 起</div><div class="sub">已闭环 1 起</div></div>
+      </div>
+      <div class="module-grid">
+        <div class="module-card" onclick="openPage('page-iqc')"><div class="m-ico i2">🧪</div><div class="m-name">来料检验 IQC</div><div class="m-desc">原料到货登记、取样、按标准检验、自动判定放行</div></div>
+        <div class="module-card" onclick="openPage('page-ipqc')"><div class="m-ico i1">🏭</div><div class="m-name">过程检验 IPQC</div><div class="m-desc">中控检验、巡检、首件确认，绑定生产批次</div></div>
+        <div class="module-card" onclick="openPage('page-oqc')"><div class="m-ico i6">📦</div><div class="m-name">成品检验 OQC</div><div class="m-desc">成品批检验、COA 报告、放行发货</div></div>
+        <div class="module-card" onclick="openPage('page-ncr')"><div class="m-ico i4">🏅</div><div class="m-name">不合格处理 NCR</div><div class="m-desc">不合格自动开单，五步闭环全程留痕</div></div>
+        <div class="module-card" onclick="openPage('page-trace')"><div class="m-ico i5">🔍</div><div class="m-name">批次追溯</div><div class="m-desc">成品批号一键反查原料、设备、班组、检验数据</div></div>
+        <div class="module-card" onclick="openPage('page-report')"><div class="m-ico i3">📈</div><div class="m-name">质量报表</div><div class="m-desc">合格率、柏拉图、趋势图，一键导出 Excel</div></div>
+      </div>
+      <div class="panel"><h3>⚠️ 今日质量预警</h3>
+        <table>
+          <tr><th>时间</th><th>类型</th><th>内容</th><th>状态</th></tr>
+          <tr><td>09-09 08:12</td><td>来料不合格</td><td>原料批 RA-20260909-003 磷含量超标，已生成 NCR-2026-089</td><td><span class="tag tag-bad">待处理</span></td></tr>
+          <tr><td>09-08 16:40</td><td>过程超限</td><td>3#反应釜温度批次 P-0908-12 偏离工艺范围</td><td><span class="tag tag-warn">处理中</span></td></tr>
+          <tr><td>09-08 10:22</td><td>设备到期</td><td>检具 卡尺-07 校准到期，已停用待送检</td><td><span class="tag tag-warn">处理中</span></td></tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 来料检验 IQC ── -->
+    <section class="page" id="page-iqc">
+      <div class="page-title">来料检验（IQC）</div>
+      <div class="page-desc">原料到货 → 登记批号 → 按该物料的标准自动带出检验项目 → 录数自动判定</div>
+      <div class="panel">
+        <h3>🧪 新建来料检验</h3>
+        <div class="form-row">
+          <div class="field"><label>到货单号</label><input id="iqc-no" value="AR-20260909-018"></div>
+          <div class="field"><label>物料</label><select id="iqc-mat">
+            <option>磷酸二氢铵（原料）</option><option>工业级磷酸（原料）</option><option>硫酸亚铁（原料）</option></select></div>
+          <div class="field"><label>供应商</label><select><option>湖北XX化工有限公司</option><option>四川XX矿业</option></select></div>
+          <div class="field"><label>供应商批号</label><input value="SUP-220908-6"></div>
+          <div class="field"><label>到货数量(t)</label><input value="32.5"></div>
+          <button class="btn btn-p" onclick="loadIqcItems()">生成检验项 →</button>
+        </div>
+        <div class="note-bar">点击"生成检验项"，系统会按【物料 × 来料检验】自动匹配标准库，带出要检的项目和限值——这就是"标准统一收口"。</div>
+        <div id="iqc-items"></div>
+        <div id="iqc-result"></div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="btn btn-p" onclick="submitIqc()">✔ 提交判定</button>
+          <button class="btn btn-o" onclick="demoIqcPass()">一键填合格值</button>
+          <button class="btn btn-o" onclick="demoIqcFail()">一键填不合格值（演示拦截）</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 过程检验 IPQC ── -->
+    <section class="page" id="page-ipqc">
+      <div class="page-title">过程检验（IPQC）</div>
+      <div class="page-desc">中控/巡检检验绑定生产批次；不合格批次自动冻结，不可流入下道工序</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="lab">今日待检样</div><div class="val blue">23</div><div class="sub">生产车间送样</div></div>
+        <div class="stat-card"><div class="lab">我的待检</div><div class="val warn">6</div><div class="sub">化验员：王芳</div></div>
+      </div>
+      <div class="panel"><h3>🏭 待检批次（按岗位筛选）</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>送样时间</th><th>生产批次</th><th>工序</th><th>设备</th><th>班组</th><th>检验类型</th><th>操作</th></tr>
+          <tr><td>09-09 09:02</td><td>P-20260909-012</td><td>合成反应</td><td>3#反应釜</td><td>A班</td><td>中控检验</td><td><button class="btn btn-o btn-sm" onclick="openPage('page-oqc');alert('正式版跳转检验录入')">去检验</button></td></tr>
+          <tr><td>09-09 08:47</td><td>P-20260909-009</td><td>压滤洗涤</td><td>2#压滤机</td><td>B班</td><td>巡检</td><td><button class="btn btn-o btn-sm">去检验</button></td></tr>
+          <tr><td>09-09 08:15</td><td>P-20260909-004</td><td>干燥包装</td><td>1#干燥线</td><td>C班</td><td>首件检验</td><td><button class="btn btn-o btn-sm">去检验</button></td></tr>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ── 成品检验 OQC ── -->
+    <section class="page" id="page-oqc">
+      <div class="page-title">成品检验（OQC）</div>
+      <div class="page-desc">成品批检验按【客户要求】匹配标准；合格生成 COA 报告（可打印、可给客户扫码）</div>
+      <div class="panel">
+        <h3>📦 成品检验录入（演示同 IQC 交互）</h3>
+        <div class="form-row">
+          <div class="field"><label>成品批次</label><input value="FG-20260909-021"></div>
+          <div class="field"><label>产品</label><select><option>电池级磷酸铁</option><option>工业级磷酸铁</option></select></div>
+          <div class="field"><label>客户</label><select><option>XX新能源科技</option><option>内销仓（无客户）</option></select></div>
+          <button class="btn btn-p" onclick="alert('正式版：生成检验项并录数判定')">生成检验项 →</button>
+        </div>
+        <div class="note-bar">成品标准按客户要求匹配（示例：电池级磷酸铁关键指标 Fe/P、比表面积、杂质含量等）。检验合格后可一键生成 COA 报告。</div>
+      </div>
+    </section>
+
+    <!-- ── 检验记录 ── -->
+    <section class="page" id="page-testlist">
+      <div class="page-title">检验记录</div>
+      <div class="page-desc">全部检验单（来料/过程/成品），支持筛选</div>
+      <div class="panel">
+        <div class="form-row">
+          <div class="field"><label>检验类型</label><select onchange=""><option>全部</option><option>来料 IQC</option><option>过程 IPQC</option><option>成品 OQC</option></select></div>
+          <div class="field"><label>判定结果</label><select><option>全部</option><option>合格</option><option>不合格</option></select></div>
+          <div class="field"><label>关键字</label><input placeholder="批号/检验单号"></div>
+          <button class="btn btn-p">查询</button>
+          <button class="btn btn-o">📤 导出 Excel</button>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table>
+        <tr><th>检验单号</th><th>类型</th><th>批次</th><th>物料/工序</th><th>检验员</th><th>检验项</th><th>判定</th><th>操作</th></tr>
+        <tr><td>T-20260909-031</td><td><span class="tag tag-blue">IQC</span></td><td>RA-20260909-003</td><td>磷酸二氢铵</td><td>李小明</td><td>5/5</td><td><span class="tag tag-bad">不合格</span></td><td><button class="btn btn-o btn-sm">查看</button></td></tr>
+        <tr><td>T-20260909-027</td><td><span class="tag tag-blue">IPQC</span></td><td>P-20260909-009</td><td>压滤洗涤</td><td>王芳</td><td>4/4</td><td><span class="tag tag-ok">合格</span></td><td><button class="btn btn-o btn-sm">查看</button></td></tr>
+        <tr><td>T-20260908-118</td><td><span class="tag tag-gray">OQC</span></td><td>FG-20260908-015</td><td>电池级磷酸铁</td><td>王芳</td><td>9/9</td><td><span class="tag tag-ok">合格</span></td><td><button class="btn btn-o btn-sm">查看</button> <button class="btn btn-s btn-sm">COA</button></td></tr>
+      </table></div>
+    </section>
+
+    <!-- ── NCR 不合格处理 ── -->
+    <section class="page" id="page-ncr">
+      <div class="page-title">不合格品处理（NCR）</div>
+      <div class="page-desc">检验不合格自动开单，走五步闭环：生产分析 → 工艺分析 → 质量评估 → 生产处理 → 闭环</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="lab">本月新增</div><div class="val bad">21 张</div><div class="sub">来料 6 / 过程 12 / 成品 3</div></div>
+        <div class="stat-card"><div class="lab">处理中</div><div class="val warn">7 张</div><div class="sub">超期未处理 2 张</div></div>
+        <div class="stat-card"><div class="lab">已闭环</div><div class="val good">14 张</div><div class="sub">闭环率 66.7%</div></div>
+      </div>
+      <div class="tbl-wrap"><table>
+        <tr><th>NCR 号</th><th>来源</th><th>批次</th><th>不合格项</th><th>当前环节</th><th>发起时间</th><th>操作</th></tr>
+        <tr><td>NCR-2026-089</td><td><span class="tag tag-blue">来料</span></td><td>RA-20260909-003</td><td>磷含量 28.4%（标准≤27.5%）</td><td><span class="tag tag-warn">① 待生产分析</span></td><td>09-09 08:12</td><td><button class="btn btn-o btn-sm" onclick="showNcr()">📋 详情</button></td></tr>
+        <tr><td>NCR-2026-085</td><td><span class="tag tag-blue">过程</span></td><td>P-20260908-016</td><td>粒径 D50 偏高</td><td><span class="tag tag-warn">③ 待质量评估</span></td><td>09-08 15:30</td><td><button class="btn btn-o btn-sm" onclick="showNcr()">📋 详情</button></td></tr>
+        <tr><td>NCR-2026-080</td><td><span class="tag tag-gray">成品</span></td><td>FG-20260907-003</td><td>水分超标</td><td><span class="tag tag-ok">⑤ 已闭环</span></td><td>09-07 11:20</td><td><button class="btn btn-o btn-sm" onclick="showNcr()">📋 详情</button></td></tr>
+      </table></div>
+    </section>
+
+    <!-- ── 追溯 ── -->
+    <section class="page" id="page-trace">
+      <div class="page-title">批次追溯</div>
+      <div class="page-desc">输入成品/过程批号，一键反查：用了哪批原料、哪台设备、哪个班组、检验数据、发给谁</div>
+      <div class="panel">
+        <div class="form-row">
+          <div class="field"><label>输入批号</label><input id="trace-input" value="FG-20260908-015"></div>
+          <button class="btn btn-p" onclick="runTrace()">🔍 追溯</button>
+          <button class="btn btn-o" onclick="document.getElementById('trace-input').value='FG-20260907-003';runTrace()">试试出问题的批次</button>
+        </div>
+      </div>
+      <div id="trace-result"></div>
+    </section>
+
+    <!-- ── 报表 ── -->
+    <section class="page" id="page-report">
+      <div class="page-title">质量报表</div>
+      <div class="page-desc">自动统计，一键导出 Excel；管理层可设"只看汇总、不看明细"</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="lab">本月一次合格率</div><div class="val good">98.1%</div><div class="sub">环比 +0.4%</div></div>
+        <div class="stat-card"><div class="lab">来料合格率</div><div class="val blue">96.2%</div><div class="sub">环比 -1.1%</div></div>
+        <div class="stat-card"><div class="lab">NCR 闭环率</div><div class="val warn">66.7%</div><div class="sub">平均闭环 2.3 天</div></div>
+      </div>
+      <div class="panel"><h3>📊 本月不良类型分布（柏拉图，正式版为图表）</h3>
+        <div style="display:flex;gap:6px;align-items:flex-end;height:120px;padding:6px 2px">
+          <div style="flex:1;text-align:center"><div style="background:#2f9df4;height:104px;border-radius:6px 6px 0 0"></div><div style="font-size:11px;color:var(--text-sub);margin-top:4px">粒径超标<br>38%</div></div>
+          <div style="flex:1;text-align:center"><div style="background:#57b8ff;height:72px;border-radius:6px 6px 0 0"></div><div style="font-size:11px;color:var(--text-sub);margin-top:4px">水分超标<br>26%</div></div>
+          <div style="flex:1;text-align:center"><div style="background:#9acdf7;height:44px;border-radius:6px 6px 0 0"></div><div style="font-size:11px;color:var(--text-sub);margin-top:4px">杂质超标<br>16%</div></div>
+          <div style="flex:1;text-align:center"><div style="background:#c9e4fb;height:30px;border-radius:6px 6px 0 0"></div><div style="font-size:11px;color:var(--text-sub);margin-top:4px">外观<br>11%</div></div>
+          <div style="flex:1;text-align:center"><div style="background:#e3f0fc;height:18px;border-radius:6px 6px 0 0"></div><div style="font-size:11px;color:var(--text-sub);margin-top:4px">其他<br>9%</div></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px"><button class="btn btn-p">📤 导出本月质量月报 Excel</button><button class="btn btn-o">📅 选择月份</button></div>
+    </section>
+
+    <!-- ── 基础数据 ── -->
+    <section class="page" id="page-base">
+      <div class="page-title">基础数据</div>
+      <div class="page-desc">检验标准库、物料、供应商、人员——支持 Excel 批量导入 + 每行编辑（✏️）</div>
+      <div class="panel">
+        <h3>📚 检验标准库（示例：来料 · 磷酸二氢铵）</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>检验项目</th><th>单位</th><th>标准下限</th><th>标准上限</th><th>检验方法</th><th>操作</th></tr>
+          <tr><td>主含量（P₂O₅）</td><td>%</td><td>≥ 27.5</td><td>—</td><td>GB/T 2091</td><td><button class="btn btn-o btn-sm">✏️</button></td></tr>
+          <tr><td>铁含量</td><td>%</td><td>—</td><td>≤ 0.05</td><td>GB/T 2091</td><td><button class="btn btn-o btn-sm">✏️</button></td></tr>
+          <tr><td>水分</td><td>%</td><td>—</td><td>≤ 0.3</td><td>烘干法</td><td><button class="btn btn-o btn-sm">✏️</button></td></tr>
+          <tr><td>水不溶物</td><td>%</td><td>—</td><td>≤ 0.03</td><td>重量法</td><td><button class="btn btn-o btn-sm">✏️</button></td></tr>
+        </table></div>
+        <div style="margin-top:12px;display:flex;gap:10px">
+          <button class="btn btn-p">+ 新增检验项目</button>
+          <button class="btn btn-o">📥 Excel 批量导入</button>
+          <button class="btn btn-o">📤 导出模板</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 移动端示意 ── -->
+    <section class="page" id="page-mobile">
+      <div class="page-title" style="text-align:center">📱 移动端（车间现场用，App 式交互）</div>
+      <div class="page-desc" style="text-align:center">底部 Tab：首页 / 溯源 / 库存 / 我的；检验员登录后首页按岗位显示"待检任务"</div>
+      <div style="display:flex;gap:26px;justify-content:center;flex-wrap:wrap">
+        <div class="m-phone">
+          <div class="m-appbar">🏭 质量工作台 <span class="m-user">王芳 · 化验员</span></div>
+          <div class="m-body">
+            <div class="m-card"><div class="t">📤 待检任务（6）</div>
+              <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #e6eef7">P-20260909-012 合成反应 <span class="tag tag-blue">去检验</span></div>
+              <div style="display:flex;justify-content:space-between;padding:5px 0">RA-20260909-003 磷酸二氢铵 <span class="tag tag-bad">已出NCR</span></div>
+            </div>
+            <div class="m-card"><div class="t">🧪 最近录入</div><div style="color:var(--text-sub);font-size:12px">09-09 08:47 · T-20260909-027 合格 ✔</div></div>
+            <div class="m-card"><div class="t">📈 今日车间动态</div><div style="font-size:12px">一次合格率 98.3% · 待处理 NCR 2</div></div>
+          </div>
+          <div class="m-tabs">
+            <div class="m-tab on"><span class="t-ic">🏠</span>首页</div>
+            <div class="m-tab"><span class="t-ic">🔍</span>溯源</div>
+            <div class="m-tab"><span class="t-ic">📦</span>库存</div>
+            <div class="m-tab"><span class="t-ic">👤</span>我的</div>
+          </div>
+        </div>
+        <div style="max-width:330px;padding-top:20px">
+          <div class="panel"><h3>移动端设计要点</h3>
+            <ul style="font-size:13px;line-height:2;padding-left:18px;color:#4a5a72">
+              <li>检验员 = <b>录入为主</b>：首页先看到待检任务，点进去直接录数</li>
+              <li>主管/经理 = <b>查询为主</b>：首页先看到数据看板</li>
+              <li>严格 App 交互：底部 Tab + 顶栏返回，无多余按钮</li>
+              <li>检验项模板自动带出，超限标红，提交即自动判定</li>
+              <li>可"添加到主屏幕"像 App 一样用（PWA），车间无 WiFi 也能开界面</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- NCR 详情弹窗 -->
+<div class="modal-mask" id="ncr-mask" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <span class="close-x" onclick="document.getElementById('ncr-mask').classList.remove('show')">✕</span>
+    <h3>NCR-2026-089 · 来料不合格 <span class="tag tag-warn" style="margin-left:6px">处理中</span></h3>
+    <table style="font-size:13px;margin-bottom:8px">
+      <tr><td style="color:var(--text-sub);width:90px">批次</td><td>RA-20260909-003 磷酸二氢铵（湖北XX化工）</td></tr>
+      <tr><td style="color:var(--text-sub)">不合格项</td><td><span style="color:var(--bad);font-weight:700">磷含量：实测 28.4%（标准 ≤ 27.5%）</span></td></tr>
+      <tr><td style="color:var(--text-sub)">当前处理</td><td>退货处理中，已通知采购部</td></tr>
+    </table>
+    <div class="steps">
+      <div class="step done"><span class="st-ico">✔</span><div><div class="st-name">① 生产主管分析</div><div class="st-time">李强 · 09-09 08:30 · 供应商来料磷含量波动</div></div></div>
+      <div class="step done"><span class="st-ico">✔</span><div><div class="st-name">② 工艺主管分析</div><div class="st-time">赵工 · 09-09 09:10 · 同供应商近期批次正常，疑似单批偏析</div></div></div>
+      <div class="step todo"><span class="st-ico">•</span><div><div class="st-name">③ 质量评估（当前）</div><div class="st-time">（未填写）</div></div></div>
+      <div class="step todo"><span class="st-ico">•</span><div><div class="st-name">④ 生产处理</div><div class="st-time">（未填写）</div></div></div>
+      <div class="step todo"><span class="st-ico">•</span><div><div class="st-name">⑤ 闭环验证</div><div class="st-time">（未填写）</div></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 折叠菜单
+function tg(el){el.classList.toggle('open');var it=el.nextElementSibling;if(it)it.classList.toggle('open')}
+// 页面切换（含菜单高亮）
+function openPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  var pg=document.getElementById(id); if(pg)pg.classList.add('active');
+  document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));
+  var mi=document.querySelector('.menu-item[data-p="'+id+'"]');
+  if(mi){mi.classList.add('active');
+    var grp=mi.closest('.group-items');
+    document.querySelectorAll('.group-items').forEach(g=>g.classList.remove('open'));
+    document.querySelectorAll('.menu-group').forEach(g=>g.classList.remove('open'));
+    if(grp){grp.classList.add('open');var h=grp.previousElementSibling;if(h&&h.classList.contains('menu-group'))h.classList.add('open')}
+  }
+  document.querySelector('.content').scrollTop=0; window.scrollTo(0,0);
+}
+
+// ═══ 来料检验演示 ═══
+const IQC_TEMPLATE=[
+  {name:'主含量（P₂O₅）',unit:'%',min:27.5,max:null},
+  {name:'铁含量',unit:'%',min:null,max:0.05},
+  {name:'水分',unit:'%',min:null,max:0.3},
+  {name:'水不溶物',unit:'%',min:null,max:0.03},
+  {name:'外观',unit:'—',min:null,max:null,text:true}
+];
+function loadIqcItems(){
+  var box=document.getElementById('iqc-items');
+  var html='<div style="font-size:13px;font-weight:600;color:#3d5a80;margin:8px 0">📋 已按标准库自动生成 5 项检验（依据 GB/T 2091）——请录入实测值：</div>';
+  IQC_TEMPLATE.forEach(function(it,i){
+    html+='<div class="item-row">'
+      +'<div><b>'+it.name+'</b>'+(it.min!==null||it.max!==null?'<br><span style="color:var(--text-sub);font-size:11.5px">标准：'+(it.min!==null?'≥'+it.min+' ':'')+(it.max!==null?'≤'+it.max:'')+(it.text?'目测':' '+it.unit)+'</span>':'')+'</div>'
+      +(it.text?'<div style="grid-column:span 2"><input placeholder="填写外观描述"></div>':'<div><input class="iqc-val" data-i="'+i+'" placeholder="实测值" oninput="liveCheck('+i+')"></div>')
+      +'<div style="color:var(--text-sub);font-size:12px">'+(it.text?'—':it.unit)+'</div>'
+      +'<div><span class="res res-wait" id="res-'+i+'">⏳ 待录入</span></div></div>';
+  });
+  box.innerHTML=html;
+}
+function liveCheck(i){
+  var v=parseFloat(document.querySelectorAll('.iqc-val')[i].value);
+  var it=IQC_TEMPLATE[i],res=document.getElementById('res-'+i);
+  if(isNaN(v)){res.className='res res-wait';res.textContent='⏳ 待录入';return}
+  var fail=(it.min!==null&&v<it.min)||(it.max!==null&&v>it.max);
+  res.className=fail?'res res-fail':'res res-pass';
+  res.textContent=fail?'✘ 超限':'✔ 合格';
+}
+function demoIqcPass(){fillIqc([28.1,0.03,0.2,0.02]);checkAll()}
+function demoIqcFail(){fillIqc([28.4,0.06,0.4,0.03]);checkAll()}
+function fillIqc(arr){
+  var ins=document.querySelectorAll('.iqc-val');
+  arr.forEach(function(v,i){ins[i].value=v;liveCheck(i)});
+}
+function checkAll(){
+  for(var i=0;i<IQC_TEMPLATE.length;i++){
+    if(!IQC_TEMPLATE[i].text)liveCheck(i);
+  }
+}
+function submitIqc(){
+  var res=document.getElementById('iqc-result');
+  var fails=document.querySelectorAll('.res-fail').length;
+  var todo=document.querySelectorAll('.res-wait').length;
+  if(todo>0&&fails===0){res.innerHTML='<div class="alertbar alert-info">ℹ️ 还有 '+todo+' 项未录入（可点上方"一键填合格值"快速演示）</div>';return}
+  if(fails===0){
+    res.innerHTML='<div class="alertbar alert-ok">✔ 判定：<b>合格</b> —— 批次 AR-20260909-018 放行入库，可投料使用。</div>';
+  }else{
+    res.innerHTML='<div class="alertbar alert-bad">✘ 判定：<b>不合格</b>（'+fails+' 项超限）—— 系统已<b>自动冻结该批</b>并生成 <b>NCR-2026-089</b>，已通知采购部与质量主管。该原料<b>不能投料</b>。<br><span style="font-size:12px">→ 可在左侧"不合格处理"查看闭环进度；这就是"不合格自动拦截"。</span></div>';
+  }
+}
+
+// ═══ 追溯演示 ═══
+function runTrace(){
+  var code=document.getElementById('trace-input').value.trim();
+  var box=document.getElementById('trace-result');
+  if(code.indexOf('003')>-1){
+    box.innerHTML='<div class="alertbar alert-bad">✘ 该成品批次 <b>'+code+'</b> 关联到不合格原料批 RA-20260909-003，请按下链定位源头：</div>'+chainHtml(true);
+  }else{
+    box.innerHTML='<div class="alertbar alert-ok">✔ 批次 <b>'+code+'</b> 全程检验合格，追溯链完整（6 级，模拟）：</div>'+chainHtml(false);
+  }
+}
+function chainHtml(bad){
+  return '<div class="chain">'
+   +'<div class="chain-node"><span class="cn-k">成品</span><div><b>FG-20260908-015 电池级磷酸铁</b><br><span style="color:var(--text-sub)">干燥包装 · 1#干燥线 · C班 · 成品检验合格（T-20260908-118）→ 已发 XX新能源科技</span></div></div>'
+   +'<div class="chain-node"><span class="cn-k">过程</span><div><b>P-20260908-012 合成反应</b><br><span style="color:var(--text-sub)">3#反应釜 · A班 · 中控检验合格（pH 2.1 / 温度 96℃）</span></div></div>'
+   +'<div class="chain-node"><span class="cn-k">原料</span><div><b>RA-20260908-004 磷酸二氢铵</b>（湖北XX化工 · 供应商批号 SUP-220908-1）<br><span style="color:var(--text-sub)">来料检验合格：主含量 27.8% / 铁 0.03% / 水 0.2%</span></div></div>'
+   +(bad?'<div class="chain-node fail"><span class="cn-k">⚠️源头</span><div><b>RA-20260909-003 磷酸二氢铵</b>（湖北XX化工 · 供应商批号 SUP-220908-6）<br><span style="color:var(--bad)">来料检验不合格：磷含量 28.4%（标准 ≤27.5%）→ NCR-2026-089 处理中，该批未投料</span></div></div>':'')
+   +'</div><div style="margin-top:10px;display:flex;gap:10px"><button class="btn btn-o btn-sm">🖨️ 打印追溯报告</button><button class="btn btn-o btn-sm">📤 导出</button></div>';
+}
+function showNcr(){document.getElementById('ncr-mask').classList.add('show')}
+</script>
+</body>
+</html>

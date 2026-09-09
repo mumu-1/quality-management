@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生产质量管理系统</title>
+<style>
+/* ===== 商务克制风格：白卡片+细边框+浅色图标块+低饱和点缀 ===== */
+:root{
+  --bg1:#eaf2fb; --bg2:#e6eff9;
+  --accent:#2f9df4; --accent2:#57b8ff;
+  --border:#e3edf8; --text:#1f2d3d; --text-sub:#8aa3c4;
+  --ok:#2eb872; --warn:#e6a23c; --bad:#e05252;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei",system-ui,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);min-height:100vh}
+/* 登录 */
+#login-view{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:200;background:linear-gradient(135deg,#eaf2fb,#dbe9f8)}
+#login-card{width:400px;background:#fff;border:1px solid var(--border);border-radius:16px;padding:36px 34px;box-shadow:0 10px 30px rgba(31,90,150,.12)}
+#login-card .lg-ico{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#2f9df4,#57b8ff);display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 12px}
+#login-card h1{font-size:20px;text-align:center;margin-bottom:4px}
+#login-card .lg-sub{font-size:12.5px;color:var(--text-sub);text-align:center;margin-bottom:22px}
+#login-card input{width:100%;height:42px;border:1px solid #d6e4f3;border-radius:10px;padding:0 12px;font-size:14px;margin-bottom:12px;outline:none;background:#fbfdff}
+#login-card input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(47,157,244,.14);background:#fff}
+#login-card .btn{width:100%;height:42px;border:none;border-radius:10px;background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff;font-size:15px;cursor:pointer}
+#login-card .btn:hover{filter:brightness(1.05)}
+#login-card .lg-hint{margin-top:14px;font-size:12px;color:var(--text-sub);background:#f4f9fe;border:1px dashed #cfe3f7;border-radius:8px;padding:8px 12px;line-height:1.7}
+#login-msg{color:var(--bad);font-size:13px;text-align:center;height:18px;margin-bottom:6px}
+/* 顶部总导航 */
+.topbar{display:flex;align-items:center;gap:12px;padding:0 18px;height:54px;background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff;position:sticky;top:0;z-index:60}
+.topbar .logo{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.topbar .logo .ic{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:16px}
+.top-link{color:#fff;text-decoration:none;background:rgba(255,255,255,.16);padding:5px 12px;border-radius:14px;font-size:12.5px;cursor:pointer;border:none}
+.top-link:hover{background:rgba(255,255,255,.32)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px}
+.top-right .u-chip{background:rgba(255,255,255,.16);padding:5px 14px;border-radius:16px;font-size:12.5px}
+.btn-quit{background:rgba(255,255,255,.18);border:none;color:#fff;padding:5px 12px;border-radius:14px;cursor:pointer;font-size:12.5px}
+/* 三段式主体 */
+.layout{display:flex;min-height:calc(100vh - 54px)}
+.sidebar{width:220px;background:#fff;border-right:1px solid var(--border);padding:10px 8px;overflow-y:auto;flex-shrink:0}
+.menu-group{padding:9px 12px;font-size:12.5px;color:var(--text-sub);cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-radius:8px;user-select:none}
+.menu-group:hover{background:#f2f8fe;color:var(--accent)}
+.menu-group .arrow{font-size:10px;transition:transform .2s}
+.menu-group.open .arrow{transform:rotate(90deg)}
+.group-items{display:none;margin:2px 0 6px}
+.group-items.open{display:block}
+.menu-item{padding:8px 12px 8px 26px;font-size:13px;border-radius:8px;cursor:pointer;color:#4a5a72;margin:1px 0}
+.menu-item:hover{background:#f2f8fe;color:var(--accent)}
+.menu-item.active{background:linear-gradient(90deg,#e3f2ff,#f0f8ff);color:var(--accent);font-weight:600}
+.content{flex:1;padding:18px 22px;overflow-x:auto;min-width:0}
+.page{display:none}
+.page.active{display:block;animation:fade .25s}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.page-title{font-size:18px;font-weight:700;margin-bottom:4px}
+.page-desc{font-size:13px;color:var(--text-sub);margin-bottom:16px}
+/* 卡片 */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px}
+.stat-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(31,90,150,.05)}
+.stat-card .lab{font-size:12.5px;color:var(--text-sub)}
+.stat-card .val{font-size:24px;font-weight:700;margin:4px 0 2px}
+.stat-card .val.blue{color:var(--accent)}
+/* 面板/工具条 */
+.panel{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.searchbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.searchbar input,.searchbar select{height:32px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px;font-size:13px;min-width:140px;outline:none;background:#fff}
+.searchbar input:focus,.searchbar select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(47,157,244,.14)}
+.btn{border:none;border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer}
+.btn-p{background:linear-gradient(90deg,#2f9df4,#57b8ff);color:#fff}
+.btn-p:hover{filter:brightness(1.05)}
+.btn-o{background:#fff;border:1px solid #d6e4f3;color:#3d5a80}
+.btn-o:hover{border-color:var(--accent);color:var(--accent)}
+.btn-s{background:#e6f9f0;color:var(--ok);border:1px solid #bfe8d5}
+.btn-sm{padding:4px 10px;font-size:12px;border-radius:7px}
+/* 表格 */
+.tbl-wrap{background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+th{background:#f7fafd;color:#5a7188;font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid #f0f5fa}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f7fbfe}
+.tag{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px}
+.tag-blue{background:#e8f4ff;color:var(--accent)}
+.tag-green{background:#e6f9f0;color:var(--ok)}
+.tag-gray{background:#eef2f7;color:#7b8ca3}
+.tag-red{background:#fdecef;color:var(--bad)}
+/* 弹窗 */
+.modal-mask{display:none;position:fixed;inset:0;background:rgba(20,40,70,.4);z-index:100;align-items:center;justify-content:center}
+.modal-mask.show{display:flex}
+.modal{background:#fff;border-radius:14px;width:520px;max-width:94vw;max-height:88vh;overflow-y:auto;padding:20px}
+.modal h3{font-size:15px;margin-bottom:14px}
+.close-x{float:right;cursor:pointer;color:var(--text-sub);font-size:18px}
+.form-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.field label{display:block;font-size:12px;color:var(--text-sub);margin-bottom:4px}
+.field input,.field select{height:32px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px;font-size:13px;outline:none;background:#fff}
+.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(47,157,244,.14)}
+/* 提示 */
+.alertbar{border-radius:10px;padding:9px 14px;font-size:13px;margin-bottom:12px}
+.alert-ok{background:#e6f9f0;border:1px solid #bfe8d5;color:#1e7a4f}
+.alert-bad{background:#fdecef;border:1px solid #f5c6cc;color:#b03434}
+.hidden{display:none!important}
+/* 权限/工序 chips 多选 */
+.chip{display:inline-block;padding:4px 13px;border-radius:16px;border:1px solid #d6e4f3;cursor:pointer;font-size:12.5px;background:#fff;color:#4a5a72;user-select:none;transition:all .15s;margin:2px}
+.chip:hover{border-color:var(--accent2)}
+.chip.on{background:#e3f2ff;border-color:var(--accent);color:#1d6fb8;font-weight:600}
+.chip input{display:none}
+.perm-sec{border:1px dashed #d6e4f3;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fbfdff}
+.perm-sec .ps-title{font-size:12.5px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.perm-sec .ps-desc{font-size:11.5px;color:var(--text-sub);font-weight:400;margin-left:auto}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cfe0f2;border-radius:4px}
+</style>
+</head>
+<body>
+
+<!-- ══════════ 登录 ══════════ -->
+<div id="login-view">
+  <div id="login-card">
+    <div class="lg-ico">🏭</div>
+    <h1>生产质量管理系统</h1>
+    <div class="lg-sub">原料到货 → 过程检验 → 成品出厂，一条线管到底</div>
+    <div id="login-msg"></div>
+    <input id="login-user" placeholder="用户名" value="admin">
+    <input id="login-pwd" type="password" placeholder="密码" value="123456" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn" onclick="doLogin()">登 录</button>
+    <div class="lg-hint">💡 演示账号：admin（管理员）/ qm（质量经理）/ qc（检验员）/ prodlead（班组长）/ buyer（采购）/ store（仓储），密码均 123456。不同角色看到的菜单不一样。</div>
+  </div>
+</div>
+
+<!-- ══════════ 主界面 ══════════ -->
+<div id="app-view" class="hidden">
+  <div class="topbar">
+    <div class="logo"><span class="ic">🏭</span>生产质量管理系统</div>
+    <span class="top-link" onclick="toast('📱 移动端将在后续步骤交付（车间手机录入）')">📱 移动端</span>
+    <span class="top-link" onclick="toast('📺 车间大屏将在第5步交付')">📺 数据大屏</span>
+    <div class="top-right">
+      <span class="u-chip" id="u-chip"></span>
+      <button class="btn-quit" onclick="doLogout()">退出</button>
+    </div>
+  </div>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="content" id="content">
+      <!-- 各页面容器由 JS 动态渲染 -->
+    </main>
+  </div>
+</div>
+
+<div class="modal-mask" id="modal-mask" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-box"></div>
+</div>
+
+<div id="toast" style="position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1f2d3d;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;z-index:300;display:none"></div>
+
+<script>
+/* ═══════════ 会话 ═══════════ */
+const LS_KEY='qms_user'; const LS_VER=1;
+let TOKEN=localStorage.getItem(LS_KEY+'_t')||'';
+let ME=null, MENUS=[];
+
+async function api(url,opt={}){
+  opt.headers=Object.assign({'Content-Type':'application/json'},opt.headers||{});
+  if(TOKEN)opt.headers['token']=TOKEN;
+  const r=await fetch(url,opt);
+  let d={}; try{d=await r.json()}catch(e){}
+  if(r.status===401&&!url.includes('/login')){showLogin();throw new Error('登录过期')}
+  if(!r.ok)throw new Error(d.detail||('请求失败 '+r.status));
+  return d;
+}
+function qs(obj){return Object.keys(obj).filter(k=>obj[k]!==''&&obj[k]!=null).map(k=>k+'='+encodeURIComponent(obj[k])).join('&')}
+let toastTimer=null;
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.display='none',2600)}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+/* ═══════════ 登录/登出 ═══════════ */
+async function doLogin(){
+  const u=document.getElementById('login-user').value.trim();
+  const p=document.getElementById('login-pwd').value;
+  if(!u||!p){document.getElementById('login-msg').textContent='请输入用户名和密码';return}
+  try{
+    const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})});
+    TOKEN=d.token; ME=d.user; MENUS=d.menus;
+    localStorage.setItem(LS_KEY+'_t',TOKEN);
+    localStorage.setItem(LS_KEY,JSON.stringify({user:ME,menus:MENUS,ver:LS_VER}));
+    document.getElementById('login-msg').textContent='';
+    enterApp();
+  }catch(e){document.getElementById('login-msg').textContent=e.message}
+}
+function autoLogin(){
+  const saved=JSON.parse(localStorage.getItem(LS_KEY)||'null');
+  if(saved&&saved.ver===LS_VER&&localStorage.getItem(LS_KEY+'_t')){
+    ME=saved.user; MENUS=saved.menus; TOKEN=localStorage.getItem(LS_KEY+'_t');
+    enterApp(); return true;
+  }
+  return false;
+}
+function showLogin(){document.getElementById('app-view').classList.add('hidden');document.getElementById('login-view').style.display='flex'}
+async function doLogout(){
+  try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch(e){}
+  TOKEN='';localStorage.removeItem(LS_KEY);localStorage.removeItem(LS_KEY+'_t');
+  showLogin();
+}
+function enterApp(){
+  document.getElementById('login-view').style.display='none';
+  document.getElementById('app-view').classList.remove('hidden');
+  document.getElementById('u-chip').textContent='👤 '+ME.real_name+' · '+roleName(ME.role);
+  renderSidebar();
+  openPage('dashboard');
+}
+function roleName(k){return {admin:'系统管理员',boss:'高层',qm:'质量经理',qc:'检验员',sampler:'取样员',prodlead:'班组长/主管',buyer:'采购',store:'仓储'}[k]||k}
+function canManage(key){const m=MENUS.find(x=>x.key===key);return !!(m&&m.manage)}
+function hasPage(key){return MENUS.some(x=>x.key===key)}
+
+/* ═══════════ 侧边栏（分组折叠）═══════════ */
+function renderSidebar(){
+  const groups={};
+  MENUS.forEach(m=>{ (groups[m.group]=groups[m.group]||[]).push(m); });
+  const order=Object.keys(groups);
+  let html='';
+  order.forEach((g,gi)=>{
+    const items=groups[g];
+    html+='<div class="menu-group'+(gi===0?' open':'')+'" onclick="tg(this)"><span>'+g+'</span><span class="arrow">▶</span></div>';
+    html+='<div class="group-items'+(gi===0?' open':'')+'">';
+    items.forEach(m=>{html+='<div class="menu-item" data-p="'+m.key+'" onclick="openPage(\''+m.key+'\')">'+m.name+(m.manage?'':' <span class="tag tag-gray">读</span>')+'</div>'});
+    html+='</div>';
+  });
+  document.getElementById('sidebar').innerHTML=html;
+}
+function tg(el){el.classList.toggle('open');const it=el.nextElementSibling;if(it)it.classList.toggle('open')}
+
+/* ═══════════ 页面路由 ═══════════ */
+function openPage(key){
+  document.querySelectorAll('.menu-item').forEach(x=>x.classList.toggle('active',x.dataset.p===key));
+  const c=document.getElementById('content');
+  const R={
+    dashboard:()=>renderDashboard(),
+    qcstandard:()=>renderStdPage(),
+    incoming:()=>renderIncomingPage(),
+    ncr:()=>renderNcrPage(),
+    material:()=>renderEntityPage('material'),
+    supplier:()=>renderEntityPage('supplier'),
+    customer:()=>renderEntityPage('customer'),
+    workshop:()=>renderEntityPage('workshop'),
+    station:()=>renderStationPage(),
+    team:()=>renderEntityPage('team'),
+    equipment:()=>renderEquipmentPage(),
+    user:()=>renderUserPage(),
+  };
+  if(R[key]){c.innerHTML='';R[key]()}
+}
+
+/* ═══════════ 工作台总览 ═══════════ */
+async function renderDashboard(){
+  const c=document.getElementById('content');
+  c.innerHTML='<div class="page-title">质量总览</div><div class="page-desc">基础资料就绪情况（第1步）——后续步骤将在这里展示来料/过程/成品的质量看板</div>'
+    +'<div id="ov-cards" class="stat-grid"></div>'
+    +'<div class="panel"><div style="font-size:13px;color:#5a7188;line-height:2">🚧 第1步已完成：账号权限 + 基础资料 + Excel导入。<br>⏭ 下一步（第2步）：检验标准库——给"物料×工序"配检验项目与限值。<br>👈 请从左侧菜单进入各管理页面体验。</div></div>';
+  const ov=await api('/api/overview');
+  const cards=[
+    ['📦','物料',ov.material,'blue'],['🚚','供应商',ov.supplier,'blue'],
+    ['🤝','客户',ov.customer,'blue'],['🏭','车间',ov.workshop,'blue'],
+    ['⚙️','工序',ov.station,'blue'],['👥','班组',ov.team,'blue'],
+    ['🔧','设备',ov.equipment,'blue'],['👤','账号',ov.user,'blue']];
+  document.getElementById('ov-cards').innerHTML=cards.map(x=>
+    '<div class="stat-card"><div class="lab">'+x[0]+' '+x[1]+'</div><div class="val blue">'+x[2]+'</div></div>').join('');
+}
+
+/* ═══════════ 通用实体页 ═══════════ */
+const PAGE_META={
+  material:{title:'物料管理',desc:'原料/辅料/成品档案。编码不带日期（如 RAW-001）。有修改权限才显示操作按钮。',search:'物料编码/名称'},
+  supplier:{title:'供应商管理',desc:'供应商档案（来料不合格时将通知采购处理）',search:'供应商编码/名称'},
+  customer:{title:'客户管理',desc:'客户档案（COA 扫码将按客户隔离）',search:'客户编码/名称'},
+  workshop:{title:'车间管理',desc:'单工厂多车间结构',search:'车间编码/名称'},
+  team:{title:'班组管理',desc:'生产班组（甲/乙/丙班）',search:'班组名称'},
+};
+const MAT_TYPES=['原料','辅料','中间品','成品'];
+const ROLE_OPTS=[['admin','系统管理员'],['boss','高层'],['qm','质量经理'],['qc','检验员'],['sampler','取样员'],['prodlead','班组长/主管'],['buyer','采购'],['store','仓储']];
+
+function pageShell(title,desc,body){
+  return '<div class="page-title">'+title+'</div><div class="page-desc">'+desc+'</div>'+body;
+}
+
+async function renderEntityPage(entity){
+  const meta=PAGE_META[entity];
+  const mgr=canManage(entity);
+  const imp=['material','supplier','customer','workshop','team'].includes(entity);
+  let body='<div class="panel"><div class="searchbar">'
+    +'<input id="kw-'+entity+'" placeholder="搜'+meta.search+'" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')load'+cap(entity)+'()">'
+    +'<button class="btn btn-o" onclick="load'+cap(entity)+'()">🔍 查询</button>'
+    +(imp?'<button class="btn btn-o" onclick="downloadTpl(\''+entity+'\')">⬇ 下载导入模板</button><button class="btn btn-o" onclick="importFile(\''+entity+'\')">📥 Excel 导入</button>':'')
+    +'</div></div>'
+    +'<div class="panel" style="display:none" id="addbox-'+entity+'">'+addForm(entity)+'</div>'
+    +'<div class="tbl-wrap"><table><thead id="thead-'+entity+'"></thead><tbody id="tbody-'+entity+'"></tbody></table></div>'
+    +'<input type="file" id="file-'+entity+'" class="hidden" accept=".xlsx,.csv">';
+  document.getElementById('content').innerHTML=pageShell(meta.title,meta.desc,body);
+  // 新增按钮放在标题栏
+  const c=document.getElementById('content');
+  const ttl=c.querySelector('.page-title');
+  if(mgr){
+    const btn=document.createElement('button');
+    btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+    btn.textContent='+ 新增'+meta.title.replace('管理','');
+    btn.onclick=()=>{document.getElementById('addbox-'+entity).style.display=document.getElementById('addbox-'+entity).style.display==='none'?'block':'none'};
+    ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  } else {
+    const tag=document.createElement('span');tag.className='tag tag-gray';tag.style.cssText='float:right;margin-top:6px';tag.textContent='只读';
+    ttl.parentNode.insertBefore(tag,ttl.nextSibling);
+  }
+  loadEntity(entity);
+}
+
+function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
+
+function addForm(entity){
+  const F={
+    material:()=>'<div class="form-row">'
+      +fld('编码','new-code','RAW-005',80)+fld('名称','new-name','',120)
+      +'<div class="field"><label>类型</label><select id="new-type">'+MAT_TYPES.map(t=>'<option>'+t+'</option>').join('')+'</select></div>'
+      +fld('规格','new-spec','',140)+fld('单位','new-unit','t',60)
+      +'<button class="btn btn-p" onclick="addRow(\'material\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    supplier:()=>'<div class="form-row">'
+      +fld('编码','new-code','SUP-005',100)+fld('名称','new-name','',160)+fld('联系人','new-contact','',80)+fld('电话','new-phone','',140)
+      +'<button class="btn btn-p" onclick="addRow(\'supplier\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    customer:()=>'<div class="form-row">'
+      +fld('编码','new-code','CUS-003',100)+fld('名称','new-name','',160)+fld('联系人','new-contact','',80)+fld('电话','new-phone','',140)
+      +'<button class="btn btn-p" onclick="addRow(\'customer\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    workshop:()=>'<div class="form-row">'
+      +fld('编码','new-code','WS-06',90)+fld('名称','new-name','',160)
+      +'<button class="btn btn-p" onclick="addRow(\'workshop\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    team:()=>'<div class="form-row">'
+      +fld('班组名称','new-name','',120)+fld('班组长','new-leader','',90)
+      +'<button class="btn btn-p" onclick="addRow(\'team\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+  };
+  return F[entity]?F[entity]():'';
+}
+function fld(label,id,ph,w){
+  return '<div class="field"><label>'+label+'</label><input id="'+id+'" placeholder="'+ph+'" style="width:'+w+'px"></div>';
+}
+
+const HEADERS={
+  material:['ID','编码','名称','类型','规格','单位','备注','操作'],
+  supplier:['ID','编码','名称','联系人','电话','备注','操作'],
+  customer:['ID','编码','名称','联系人','电话','备注','操作'],
+  workshop:['ID','编码','车间名称','备注','操作'],
+  team:['ID','班组名称','班组长','备注','操作'],
+};
+function rowHtml(entity,row,mgr){
+  if(entity==='material')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+typeTag(row.material_type)+'</td><td>'+esc(row.spec)+'</td><td>'+esc(row.unit)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
+  if(entity==='supplier'||entity==='customer')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.contact)+'</td><td>'+esc(row.phone)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
+  if(entity==='workshop')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
+  if(entity==='team')return '<td>'+row.id+'</td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.leader)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
+  return '';
+}
+function typeTag(t){const c={原料:'blue',辅料:'green',中间品:'gray',成品:'blue'}[t]||'gray';return '<span class="tag tag-'+c+'">'+t+'</span>'}
+function opTd(entity,row,mgr){
+  if(!mgr)return '<td></td>';
+  return '<td><button class="btn btn-o btn-sm" onclick="editRow(\''+entity+'\','+row.id+')">✏️ 编辑</button> '
+    +'<button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="delRow(\''+entity+'\','+row.id+',\''+esc(row.name||row.code)+'\')">🗑 停用</button></td>';
+}
+
+async function loadEntity(entity){
+  const kw=document.getElementById('kw-'+entity)?document.getElementById('kw-'+entity).value:'';
+  const rows=await api('/api/'+entity+(kw?'?'+qs({keyword:kw}):''));
+  const mgr=canManage(entity);
+  document.getElementById('thead-'+entity).innerHTML='<tr>'+HEADERS[entity].map(h=>'<th>'+h+'</th>').join('')+'</tr>';
+  if(!rows.length){
+    document.getElementById('tbody-'+entity).innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-sub);padding:26px">暂无数据，点击右上角"新增"或使用 Excel 导入</td></tr>';
+    return;
+  }
+  document.getElementById('tbody-'+entity).innerHTML=rows.map(r=>'<tr>'+rowHtml(entity,r,mgr)+'</tr>').join('');
+}
+async function loadMaterial(){return loadEntity('material')}
+async function loadSupplier(){return loadEntity('supplier')}
+async function loadCustomer(){return loadEntity('customer')}
+async function loadWorkshop(){return loadEntity('workshop')}
+async function loadTeam(){return loadEntity('team')}
+
+function collectNew(entity){
+  const g=id=>document.getElementById('new-'+id)?document.getElementById('new-'+id).value.trim():'';
+  const m={
+    material:()=>({code:g('code'),name:g('name'),material_type:g('type'),spec:g('spec'),unit:g('unit')}),
+    supplier:()=>({code:g('code'),name:g('name'),contact:g('contact'),phone:g('phone')}),
+    customer:()=>({code:g('code'),name:g('name'),contact:g('contact'),phone:g('phone')}),
+    workshop:()=>({code:g('code'),name:g('name')}),
+    team:()=>({name:g('name'),leader:g('leader')}),
+  };
+  return m[entity]?m[entity]():{};
+}
+async function addRow(entity){
+  const data=collectNew(entity);
+  if(!data.name){toast('请填写名称');return}
+  if(data.code!==undefined&&!data.code){toast('请填写编码');return}
+  try{
+    await api('/api/'+entity,{method:'POST',body:JSON.stringify(data)});
+    toast('✔ 已新增');
+    document.getElementById('addbox-'+entity).style.display='none';
+    ['code','name','contact','phone','spec','leader'].forEach(i=>{const el=document.getElementById('new-'+i);if(el)el.value=''});
+    loadEntity(entity);
+  }catch(e){toast('✘ '+e.message)}
+}
+async function editRow(entity,id){
+  const rows=await api('/api/'+entity);
+  const r=rows.find(x=>x.id===id);if(!r)return;
+  const fields=editFields(entity,r);
+  openModal('编辑 '+r.name||r.code,fields,(vals)=>{
+    const body=vals;
+    if(entity==='material'){body.material_type=r.material_type}
+    return api('/api/'+entity+'/'+id,{method:'PUT',body:JSON.stringify(body)});
+  },'保存修改');
+}
+function editFields(entity,r){
+  const base=[
+    {k:'code',label:'编码',v:r.code,w:120},{k:'name',label:'名称',v:r.name,w:180},
+    {k:'remark',label:'备注',v:r.remark,w:200}];
+  if(entity==='material')base.splice(2,0,{k:'spec',label:'规格',v:r.spec,w:180},{k:'unit',label:'单位',v:r.unit,w:60});
+  if(entity==='supplier'||entity==='customer')base.splice(2,0,{k:'contact',label:'联系人',v:r.contact,w:100},{k:'phone',label:'电话',v:r.phone,w:150});
+  if(entity==='team')base=[{k:'name',label:'班组名称',v:r.name,w:140},{k:'leader',label:'班组长',v:r.leader,w:100},{k:'remark',label:'备注',v:r.remark,w:200}];
+  return base;
+}
+async function delRow(entity,id,name){
+  if(!confirm('确定停用「'+name+'」？停用后列表不再显示。'))return;
+  try{await api('/api/'+entity+'/'+id,{method:'DELETE'});toast('✔ 已停用');loadEntity(entity)}
+  catch(e){toast('✘ '+e.message)}
+}
+
+/* ═══════════ Excel 导入 ═══════════ */
+function downloadTpl(entity){
+  if(!TOKEN){toast('请先登录');return}
+  fetch('/api/templates/'+entity+'.csv',{headers:{token:TOKEN}}).then(r=>{
+    if(!r.ok){toast('下载失败');return}
+    r.blob().then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=entity+'_模板.csv';a.click()});
+  });
+}
+function importFile(entity){
+  const f=document.getElementById('file-'+entity);f.value='';f.click();
+  f.onchange=async()=>{
+    if(!f.files[0])return;
+    const fd=new FormData();fd.append('file',f.files[0]);
+    const r=await fetch('/api/import/'+entity,{method:'POST',headers:{token:TOKEN},body:fd});
+    const d=await r.json();
+    if(!r.ok){toast('✘ '+(d.detail||'导入失败'));return}
+    let msg='✔ 导入完成：成功 '+d.inserted+' 行';
+    if(d.duplicated)msg+=', 重复跳过 '+d.duplicated;
+    if(d.error_count)msg+=', 失败 '+d.error_count+' 行';
+    toast(msg);
+    if(d.errors.length)alert('导入有 '+d.error_count+' 行失败：\n\n'+d.errors.join('\n'));
+    loadEntity(entity);
+  };
+}
+
+/* ═══════════ 工序页（含车间下拉）═══════════ */
+async function renderStationPage(){
+  const mgr=canManage('station');
+  const ws=await api('/api/workshop');
+  document.getElementById('content').innerHTML=pageShell('工序管理','工序挂在车间下，next 串联工艺顺序（供第4步批次追溯用）。'+ws.length+' 个车间',
+    '<div class="panel"><div class="searchbar"><input id="kw-station" placeholder="搜工序编码/名称" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadStation()">'
+    +'<button class="btn btn-o" onclick="loadStation()">🔍 查询</button></div></div>'
+    +'<div class="panel" id="addbox-station" style="display:none"><div class="form-row">'
+    +fld('编码','new-code','ST11',90)+fld('工序名称','new-name','',140)
+    +'<div class="field"><label>所属车间</label><select id="new-wsid">'+ws.map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('')+'</select></div>'
+    +'<button class="btn btn-p" onclick="addStation()">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button>'
+    +'</div></div>'
+    +'<div class="tbl-wrap"><table><thead><tr><th>ID</th><th>编码</th><th>工序名称</th><th>所属车间</th><th>下一道工序</th><th>操作</th></tr></thead><tbody id="tbody-station"></tbody></table></div>');
+  const ttl=document.querySelector('.page-title');
+  if(mgr){
+    const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+    btn.textContent='+ 新增工序';btn.onclick=()=>{document.getElementById('addbox-station').style.display='block'};
+    ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  }
+  loadStation();
+}
+async function loadStation(){
+  const kw=document.getElementById('kw-station')?document.getElementById('kw-station').value:'';
+  const rows=await api('/api/station'+(kw?'?'+qs({keyword:kw}):''));
+  const ws=await api('/api/workshop');
+  const mgr=canManage('station');
+  const tbody=document.getElementById('tbody-station');
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-sub);padding:26px">暂无工序</td></tr>';return}
+  tbody.innerHTML=rows.map(r=>'<tr><td>'+r.id+'</td><td><span class="tag tag-blue">'+esc(r.code)+'</span></td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.workshop_name||'')+'</td><td>'+esc(r.next_name||'—')+'</td>'
+    +(mgr?'<td><button class="btn btn-o btn-sm" onclick="editStation('+r.id+')">✏️ 编辑</button> <button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="delRow(\'station\','+r.id+',\''+esc(r.name)+'\')">🗑 停用</button></td>':'<td></td></tr>')).join('');
+}
+async function addStation(){
+  const code=document.getElementById('new-code').value.trim();
+  const name=document.getElementById('new-name').value.trim();
+  const wsid=document.getElementById('new-wsid').value;
+  if(!code||!name){toast('请填写编码和名称');return}
+  try{await api('/api/station',{method:'POST',body:JSON.stringify({code,name,workshop_id:wsid})});toast('✔ 已新增');document.getElementById('addbox-station').style.display='none';document.getElementById('new-code').value='';document.getElementById('new-name').value='';loadStation()}
+  catch(e){toast('✘ '+e.message)}
+}
+async function editStation(id){
+  const rows=await api('/api/station');
+  const r=rows.find(x=>x.id===id);if(!r)return;
+  openModal('编辑工序',[
+    {k:'code',label:'编码',v:r.code,w:100},{k:'name',label:'工序名称',v:r.name,w:160},
+    {k:'workshop_id',label:'所属车间',v:String(r.workshop_id),w:160,select:await api('/api/workshop'),sv:'id',st:'name'},
+  ],(vals)=>api('/api/station/'+id,{method:'PUT',body:JSON.stringify(vals)}),'保存修改');
+}
+
+/* ═══════════ 设备页（含工序下拉）═══════════ */
+async function renderEquipmentPage(){
+  const mgr=canManage('equipment');
+  const sts=await api('/api/station');
+  document.getElementById('content').innerHTML=pageShell('设备管理','设备挂在工序下。'+sts.length+' 道工序（第4步设备点检/OEE 将基于此）',
+    '<div class="panel"><div class="searchbar"><input id="kw-equipment" placeholder="搜设备编码/名称" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadEquipment()">'
+    +'<button class="btn btn-o" onclick="loadEquipment()">🔍 查询</button></div></div>'
+    +'<div class="panel" id="addbox-equipment" style="display:none"><div class="form-row">'
+    +fld('编码','new-code','EQ-014',90)+fld('设备名称','new-name','',150)+fld('类别','new-category','反应釜',90)
+    +'<div class="field"><label>所属工序</label><select id="new-stid">'+sts.map(s=>'<option value="'+s.id+'">'+esc(s.code+' '+s.name)+'</option>').join('')+'</select></div>'
+    +'<button class="btn btn-p" onclick="addEquipment()">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button>'
+    +'</div></div>'
+    +'<div class="tbl-wrap"><table><thead><tr><th>ID</th><th>编码</th><th>设备名称</th><th>类别</th><th>所属工序</th><th>车间</th><th>操作</th></tr></thead><tbody id="tbody-equipment"></tbody></table></div>');
+  const ttl=document.querySelector('.page-title');
+  if(mgr){
+    const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+    btn.textContent='+ 新增设备';btn.onclick=()=>{document.getElementById('addbox-equipment').style.display='block'};
+    ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  }
+  loadEquipment();
+}
+async function loadEquipment(){
+  const kw=document.getElementById('kw-equipment')?document.getElementById('kw-equipment').value:'';
+  const rows=await api('/api/equipment'+(kw?'?'+qs({keyword:kw}):''));
+  const mgr=canManage('equipment');
+  const tbody=document.getElementById('tbody-equipment');
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-sub);padding:26px">暂无设备</td></tr>';return}
+  tbody.innerHTML=rows.map(r=>'<tr><td>'+r.id+'</td><td><span class="tag tag-blue">'+esc(r.code)+'</span></td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.category)+'</td><td>'+esc(r.station_name||'')+'</td><td>'+esc(r.workshop_name||'')+'</td>'
+    +(mgr?'<td><button class="btn btn-o btn-sm" onclick="editEquipment('+r.id+')">✏️ 编辑</button> <button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="delRow(\'equipment\','+r.id+',\''+esc(r.name)+'\')">🗑 停用</button></td>':'<td></td>')).join('');
+}
+async function addEquipment(){
+  const code=document.getElementById('new-code').value.trim();
+  const name=document.getElementById('new-name').value.trim();
+  const cat=document.getElementById('new-category').value.trim();
+  const stid=document.getElementById('new-stid').value;
+  if(!code||!name){toast('请填写编码和名称');return}
+  try{await api('/api/equipment',{method:'POST',body:JSON.stringify({code,name,category:cat,station_id:stid})});toast('✔ 已新增');document.getElementById('addbox-equipment').style.display='none';document.getElementById('new-code').value='';document.getElementById('new-name').value='';loadEquipment()}
+  catch(e){toast('✘ '+e.message)}
+}
+async function editEquipment(id){
+  const rows=await api('/api/equipment');
+  const r=rows.find(x=>x.id===id);if(!r)return;
+  openModal('编辑设备',[
+    {k:'code',label:'编码',v:r.code,w:100},{k:'name',label:'设备名称',v:r.name,w:160},{k:'category',label:'类别',v:r.category,w:100},
+    {k:'station_id',label:'所属工序',v:String(r.station_id),w:160,select:await api('/api/station'),sv:'id',st:'name'},
+  ],(vals)=>api('/api/equipment/'+id,{method:'PUT',body:JSON.stringify(vals)}),'保存修改');
+}
+
+/* ═══════════ 账号管理（多工序 + 账号级动态权限）═══════════ */
+let PMATRIX=null;   // perm-matrix 缓存
+
+async function getPMatrix(){
+  if(!PMATRIX)PMATRIX=await api('/api/admin/perm-matrix');
+  return PMATRIX;
+}
+function roleDefault(roleKey){
+  const pm=PMATRIX.roles.find(r=>r.key===roleKey);
+  return pm?{pages:[...pm.pages],manage:[...pm.manage]}:{pages:[],manage:[]};
+}
+function chipToggle(id,el){el.classList.toggle('on');const cb=el.querySelector('input');if(cb)cb.checked=el.classList.contains('on')}
+function collectIds(containerId){
+  return Array.from(document.querySelectorAll('#'+containerId+' .chip.on')).map(c=>c.getAttribute('data-id'));
+}
+
+async function renderUserPage(){
+  await getPMatrix();
+  const sts=await api('/api/station');
+  window.ST_ALL=sts;
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='账号管理';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='账号 = 部门 × 角色 × 负责工序 + 动态权限。角色是"默认模板"，套用后仍可给单个人单独勾：能看哪些页面、能管哪些模块、负责哪些工序（质检员可管多道工序）。';
+  c.appendChild(ttl);
+  const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+  btn.textContent='+ 新建账号';btn.onclick=()=>showUserForm();
+  ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  c.appendChild(desc);
+  const filter=document.createElement('div');filter.className='panel';
+  filter.innerHTML='<div class="searchbar"><input id="kw-user" placeholder="搜用户名/姓名" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadUsers()">'
+    +'<button class="btn btn-o" onclick="loadUsers()">🔍 查询</button></div>';
+  c.appendChild(filter);
+  const addbox=document.createElement('div');addbox.className='panel';addbox.id='addbox-user';addbox.style.display='none';
+  c.appendChild(addbox);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>用户名</th><th>姓名</th><th>部门</th><th>角色</th><th>负责工序</th><th>权限</th><th>状态</th><th>操作</th></tr></thead><tbody id="tbody-user"></tbody></table>';
+  c.appendChild(tbl);
+  loadUsers();
+}
+function userFormShell(title,uid){
+  const stsHtml=(window.ST_ALL||[]).map(s=>'<span class="chip" data-id="'+s.id+'" onclick="chipToggle('+s.id+',this)">'+esc(s.code+' '+s.name)+'<input type="checkbox"></span>').join('');
+  const box=document.getElementById('addbox-user');
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:14px;font-weight:700;margin-bottom:12px">'+title+'</div>'
+    +'<div class="form-row" style="margin-bottom:10px">'
+    +'<div class="field"><label>用户名</label><input id="uf-username" style="width:110px"></div>'
+    +'<div class="field"><label>姓名</label><input id="uf-name" style="width:90px"></div>'
+    +'<div class="field"><label>部门</label><input id="uf-dept" style="width:100px"></div>'
+    +'<div class="field"><label>角色（默认模板）</label><select id="uf-role" style="min-width:130px" onchange="applyRoleTemplate()">'
+    +PMATRIX.roles.map(r=>'<option value="'+r.key+'">'+r.name+'</option>').join('')+'</select></div>'
+    +(uid?'':'<div class="field"><label>初始密码</label><input id="uf-pwd" value="123456" style="width:90px"></div>')
+    +'</div>'
+    +'<div class="perm-sec"><div class="ps-title">🏭 负责工序（可多选：一人管多道工序）'
+    +'<span class="ps-desc">选择后，检验待办/数据范围将按这些工序过滤</span></div><div id="uf-stations">'+stsHtml+'</div></div>'
+    +'<div class="perm-sec"><div class="ps-title">👁 能看哪些页面 <button class="btn btn-o btn-sm" onclick="applyRolePages()">套用角色默认</button>'
+    +'<span class="ps-desc">不勾=用角色默认；这里可单独加/减</span></div><div id="uf-pages"></div></div>'
+    +'<div class="perm-sec"><div class="ps-title">🛠️ 能管理（增删改）哪些模块 <button class="btn btn-o btn-sm" onclick="applyRoleManage()">套用角色默认</button>'
+    +'<span class="ps-desc">没勾的模块=只能看/操作，不能增删改</span></div><div id="uf-manage"></div></div>'
+    +'<div style="text-align:right;margin-top:4px"><button class="btn btn-o" onclick="document.getElementById(\'addbox-user\').style.display=\'none\'">收起</button> '
+    +'<button class="btn btn-p" onclick="saveUser('+(uid||'null')+')">✔ 保存账号</button></div>'
+    +'<div id="uf-msg"></div>';
+}
+function pageChipsHtml(checkedSet,idPrefix){
+  // 按分组排列页面 chips
+  const groups={};
+  PMATRIX.pages.forEach(p=>{(groups[p.group]=groups[p.group]||[]).push(p)});
+  let html='';
+  Object.keys(groups).forEach(g=>{
+    html+='<div style="font-size:11.5px;color:var(--text-sub);margin:6px 0 2px">'+g+'</div>';
+    groups[g].forEach(p=>{
+      const on=checkedSet.has(p.key);
+      html+='<span class="chip'+(on?' on':'')+'" data-id="'+p.key+'" onclick="chipToggle(\''+p.key+'\',this)">'+esc(p.name)+'<input type="checkbox"'+(on?' checked':'')+'></span>';
+    });
+  });
+  return html;
+}
+function applyRoleTemplate(){
+  applyRolePages();applyRoleManage();
+}
+function applyRolePages(){
+  const d=roleDefault(document.getElementById('uf-role').value);
+  document.getElementById('uf-pages').innerHTML=pageChipsHtml(new Set(d.pages));
+}
+function applyRoleManage(){
+  // 管理模块 chips 只显示该角色可见页面里"有管理意义"的（排除 dashboard/总览）
+  const d=roleDefault(document.getElementById('uf-role').value);
+  document.getElementById('uf-manage').innerHTML=pageChipsHtml(new Set(d.manage));
+}
+function showUserForm(){
+  const sts=window.ST_ALL||[];
+  userFormShell('➕ 新建账号（角色默认模板已自动勾好，可再单独调整）');
+  // 权限区先按当前角色下拉的值渲染（默认第一个角色）
+  applyRoleTemplate();
+}
+async function editUser(id){
+  const rows=await api('/api/admin/users');
+  const r=rows.find(x=>x.id===id);if(!r)return;
+  await getPMatrix();
+  if(!window.ST_ALL)window.ST_ALL=await api('/api/station');
+  userFormShell('✏️ 编辑账号 '+esc(r.username)+(r.perm_custom?' <span class="tag tag-warn">已自定义权限</span>':''),id);
+  document.getElementById('uf-username').value=r.username;document.getElementById('uf-username').readOnly=true;
+  document.getElementById('uf-name').value=r.real_name;
+  document.getElementById('uf-dept').value=r.department||'';
+  document.getElementById('uf-role').value=r.role;
+  // 工序回填
+  (r.station_ids||[]).forEach(sid=>{
+    const chip=document.querySelector('#uf-stations .chip[data-id="'+sid+'"]');
+    if(chip){chip.classList.add('on');chip.querySelector('input').checked=true}
+  });
+  // 权限回填：自定义优先，否则按角色默认
+  const view= r.view_pages!==null&&r.view_pages!==undefined ? r.view_pages : roleDefault(r.role).pages;
+  const mgr= r.manage_modules!==null&&r.manage_modules!==undefined ? r.manage_modules : roleDefault(r.role).manage;
+  document.getElementById('uf-pages').innerHTML=pageChipsHtml(new Set(view));
+  document.getElementById('uf-manage').innerHTML=pageChipsHtml(new Set(mgr));
+}
+async function saveUser(uid){
+  const msg=document.getElementById('uf-msg');
+  const username=document.getElementById('uf-username').value.trim();
+  const name=document.getElementById('uf-name').value.trim();
+  const dept=document.getElementById('uf-dept').value.trim();
+  const role=document.getElementById('uf-role').value;
+  const stIds=collectIds('uf-stations').map(Number);
+  const viewPages=collectIds('uf-pages');
+  const manage=collectIds('uf-manage');
+  if(!username||!name){msg.innerHTML='<div class="alertbar alert-bad">请填写用户名和姓名</div>';return}
+  // 管理模块必须是可见页面的子集（防"看不见却可管"）
+  const badManage=manage.filter(m=>!viewPages.includes(m));
+  if(badManage.length){msg.innerHTML='<div class="alertbar alert-bad">"可管理"勾了看不到的页面：'+esc(badManage.join('、'))+'。请先在"能看哪些页面"里勾上，或取消管理勾选。</div>';return}
+  // 保存为自定义权限（与角色默认不同的部分）。若与角色默认完全一致 → 存 null 回到角色默认
+  const def=roleDefault(role);
+  const sortEq=(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
+  const viewCustom= !sortEq(viewPages,def.pages) ? viewPages : null;
+  const mgrCustom= !sortEq(manage,def.manage) ? manage : null;
+  const body={real_name:name,department:dept,role_key:role,station_ids:stIds,
+    view_pages:viewCustom,manage_modules:mgrCustom};
+  try{
+    if(uid===null){
+      body.username=username;body.password=(document.getElementById('uf-pwd').value||'123456');
+      await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)});
+      toast('✔ 已创建账号');
+    }else{
+      await api('/api/admin/users/'+uid,{method:'PUT',body:JSON.stringify(body)});
+      toast('✔ 已保存（权限/工序已生效，该账号下次登录即按新权限）');
+    }
+    document.getElementById('addbox-user').style.display='none';
+    loadUsers();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+async function loadUsers(){
+  const kw=document.getElementById('kw-user')?document.getElementById('kw-user').value:'';
+  const rows=await api('/api/admin/users'+(kw?'?'+qs({keyword:kw}):''));
+  if(!window.ST_ALL)window.ST_ALL=await api('/api/station');
+  const sts=window.ST_ALL;
+  const tbody=document.getElementById('tbody-user');
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-sub);padding:26px">暂无账号</td></tr>';return}
+  const stName=id=>{const s=sts.find(x=>x.id===id);return s?s.code+' '+s.name:''};
+  const stTag=sid=>'<span class="tag tag-blue" style="margin:1px">'+esc(stName(sid))+'</span>';
+  tbody.innerHTML=rows.map(r=>'<tr><td><b>'+esc(r.username)+'</b></td><td>'+esc(r.real_name)+'</td><td>'+esc(r.department)+'</td>'
+    +'<td><span class="tag tag-blue">'+esc(r.role_name)+'</span></td>'
+    +'<td>'+(r.station_ids&&r.station_ids.length?r.station_ids.map(stTag).join(''):'<span class="tag tag-gray">未绑定</span>')+'</td>'
+    +'<td>'+(r.perm_custom?'<span class="tag tag-warn">🎯 自定义</span>':'<span class="tag tag-gray">角色默认</span>')+'</td>'
+    +'<td>'+(r.enabled?'<span class="tag tag-green">正常</span>':'<span class="tag tag-red">停用</span>')+'</td>'
+    +'<td><button class="btn btn-o btn-sm" onclick="editUser('+r.id+')">✏️ 编辑</button> '
+    +'<button class="btn btn-o btn-sm" onclick="resetPwd('+r.id+',\''+esc(r.username)+'\')">🔑 重置密码</button> '
+    +(r.enabled?'<button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="toggleUser('+r.id+',\''+esc(r.username)+'\',false)">停用</button>'
+      :'<button class="btn btn-s btn-sm" onclick="toggleUser('+r.id+',\''+esc(r.username)+'\',true)">启用</button>')
+    +'</td></tr>').join('');
+}
+async function resetPwd(id,uname){
+  const p=prompt('为「'+uname+'」设置新密码（至少4位）：','123456');
+  if(p===null)return;
+  if(p.length<4){toast('密码至少 4 位');return}
+  try{await api('/api/admin/users/'+id+'/password',{method:'PUT',body:JSON.stringify({password:p})});toast('✔ 密码已重置')}
+  catch(e){toast('✘ '+e.message)}
+}
+async function toggleUser(id,uname,en){
+  if(!en&&!confirm('停用账号「'+uname+'」？该账号将无法登录。'))return;
+  try{await api('/api/admin/users/'+id,{method:'PUT',body:JSON.stringify({enabled:en})});toast(en?'✔ 已启用':'✔ 已停用');loadUsers()}
+  catch(e){toast('✘ '+e.message)}
+}
+
+/* ═══════════ 通用弹窗 ═══════════ */
+function openModal(title,fields,onSave,btnText,after){
+  let html='<span class="close-x" onclick="closeModal()">✕</span><h3>'+title+'</h3>';
+  fields.forEach(f=>{
+    html+='<div class="field" style="margin-bottom:12px"><label>'+f.label+'</label>';
+    if(f.select){
+      html+='<select id="mf-'+f.k+'" style="width:100%;height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 8px">';
+      f.select.forEach(o=>{html+='<option value="'+o[f.sv]+'"'+(String(o[f.sv])===String(f.v)?' selected':'')+'>'+esc(o[f.st])+'</option>'});
+      html+='</select>';
+    }else{
+      html+='<input id="mf-'+f.k+'" value="'+esc(f.v)+'" style="width:100%;height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px">';
+    }
+    html+='</div>';
+  });
+  html+='<div style="text-align:right;margin-top:6px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+    +'<button class="btn btn-p" id="modal-save">'+(btnText||'保存')+'</button></div>';
+  const box=document.getElementById('modal-box');
+  box.innerHTML=html;
+  document.getElementById('modal-mask').classList.add('show');
+  document.getElementById('modal-save').onclick=async()=>{
+    const vals={};
+    fields.forEach(f=>{vals[f.k]=document.getElementById('mf-'+f.k).value});
+    try{await onSave(vals);toast('✔ 已保存');closeModal();if(after)after()}
+    catch(e){toast('✘ '+e.message)}
+  };
+}
+function closeModal(){document.getElementById('modal-mask').classList.remove('show')}
+
+/* ═══════════ 检验标准库（第2步）═══════════ */
+const CT_NAMES={iqc:'来料检验',ipqc:'过程检验',oqc:'成品检验'};
+const CT_ICONS={iqc:'🧪',ipqc:'🏭',oqc:'📦'};
+let STD_CACHE={mats:[],sts:[],ws:[]};
+
+async function loadStdRefs(){
+  const [mats,sts,ws]=await Promise.all([api('/api/material'),api('/api/station'),api('/api/workshop')]);
+  STD_CACHE={mats,sts,ws};
+}
+
+async function renderStdPage(){
+  const mgr=canManage('qcstandard');
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='检验标准库';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='质检的"法律"：给每种物料/工序配好检什么、限值多少。检验员录数据时系统自动按此判定。支持"复制模板"快速建标准。';
+  c.appendChild(ttl);
+  if(mgr){
+    const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+    btn.textContent='+ 新建检验标准';btn.onclick=()=>showStdCreate();
+    ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  } else {
+    const tg=document.createElement('span');tg.className='tag tag-gray';tg.style.cssText='float:right;margin-top:6px';tg.textContent='只读';
+    ttl.parentNode.insertBefore(tg,ttl.nextSibling);
+  }
+  c.appendChild(desc);
+  const filter=document.createElement('div');filter.className='panel';
+  filter.innerHTML='<div class="searchbar">'
+    +'<select id="f-ctype" style="min-width:130px" onchange="loadStds()">'
+    +'<option value="">全部检验类型</option><option value="iqc">🧪 来料检验</option><option value="ipqc">🏭 过程检验</option><option value="oqc">📦 成品检验</option></select>'
+    +'<input id="f-kw" placeholder="搜标准名称（如 磷酸一铵）" style="flex:1;min-width:220px" onkeydown="if(event.key===\'Enter\')loadStds()">'
+    +'<button class="btn btn-o" onclick="loadStds()">🔍 查询</button></div>';
+  c.appendChild(filter);
+  const addbox=document.createElement('div');addbox.className='panel';addbox.id='addbox-std';addbox.style.display='none';
+  addbox.innerHTML='<div id="std-create-form"></div>';
+  c.appendChild(addbox);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>标准号</th><th>检验类型</th><th>标准名称</th><th>适用对象</th><th>检验项</th><th>版本</th><th>最后修改</th><th>操作</th></tr></thead><tbody id="tbody-std"></tbody></table>';
+  c.appendChild(tbl);
+  loadStds();
+}
+
+async function loadStds(){
+  const ct=document.getElementById('f-ctype')?document.getElementById('f-ctype').value:'';
+  const kw=document.getElementById('f-kw')?document.getElementById('f-kw').value:'';
+  const q=qs({check_type:ct,keyword:kw});
+  const rows=await api('/api/qc-standards'+(q?'?'+q:''));
+  const tb=document.getElementById('tbody-std');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-sub);padding:26px">暂无标准，点右上角"新建检验标准"或从类似物料"复制"一份</td></tr>';return}
+  tb.innerHTML=rows.map(r=>{
+    const ops=canManage('qcstandard')
+      ?'<button class="btn btn-o btn-sm" onclick="showStdEdit('+r.id+')">✏️ 维护项目</button> '
+      +'<button class="btn btn-o btn-sm" onclick="showStdCopy('+r.id+')">⧉ 复制模板</button> '
+      +'<button class="btn btn-o btn-sm" onclick="showStdLogs('+r.id+')">📜 留痕</button>'
+      :'<button class="btn btn-o btn-sm" onclick="showStdLogs('+r.id+')">📜 留痕</button>';
+    return '<tr><td><span class="tag tag-blue">'+esc(r.std_no)+'</span></td>'
+      +'<td>'+CT_ICONS[r.check_type]+' '+esc(CT_NAMES[r.check_type]||r.check_type)+'</td>'
+      +'<td><b>'+esc(r.name)+'</b></td>'
+      +'<td>'+esc(r.object_name)+'</td>'
+      +'<td>'+r.item_count+' 项'+(r.sample_qty>1?' · 取样'+r.sample_qty:'')+'</td>'
+      +'<td>v'+r.version+'</td><td>'+esc(r.updated_by)+' · '+esc(r.updated_at)+'</td><td>'+ops+'</td></tr>';
+  }).join('');
+}
+
+// ── 新建标准 ──
+async function showStdCreate(){
+  const holder=document.getElementById('std-create-form');
+  const box=document.getElementById('addbox-std');
+  box.style.display='block';
+  await loadStdRefs();
+  holder.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">➕ 新建检验标准 —— 选对象，然后配检验项目</div>'
+    +'<div class="form-row" style="margin-bottom:10px">'
+    +'<div class="field"><label>检验类型</label><select id="sc-type" onchange="scObjOpts()">'
+    +'<option value="iqc">🧪 来料检验</option><option value="ipqc">🏭 过程检验</option></select></div>'
+    +'<div class="field"><label>适用对象</label><select id="sc-obj" style="min-width:220px"></select></div>'
+    +'<button class="btn btn-p" onclick="scAddBlank()">+ 添加检验项</button>'
+    +'<button class="btn btn-s" onclick="saveStdCreate()">✔ 保存标准</button>'
+    +'<button class="btn btn-o" onclick="document.getElementById(\'addbox-std\').style.display=\'none\'">收起</button></div>'
+    +'<div id="sc-items" style="margin-top:4px"></div>'
+    +'<div id="sc-msg" style="margin-top:8px"></div>';
+  scObjOpts();
+  scAddBlank();
+}
+function scObjOpts(){
+  const t=document.getElementById('sc-type').value;
+  const sel=document.getElementById('sc-obj');
+  if(t==='ipqc'){
+    sel.innerHTML=STD_CACHE.sts.map(s=>'<option value="'+s.id+'" data-type="station">'+esc(s.code+' '+s.name)+'（'+esc(s.workshop_name||'')+'）</option>').join('');
+  }else{
+    sel.innerHTML=STD_CACHE.mats.filter(m=>['原料','辅料'].includes(m.material_type)).map(m=>'<option value="'+m.id+'" data-type="material">'+esc(m.code+' '+m.name)+'（'+m.material_type+'）</option>').join('');
+  }
+}
+function scAddBlank(){
+  const box=document.getElementById('sc-items');
+  const div=document.createElement('div');
+  div.className='item-row';
+  div.innerHTML=itemRowHtml(null);
+  box.appendChild(div);
+}
+function itemRowHtml(it){
+  it=it||{};
+  const v=k=>it[k]!=null&&it[k]!==''?String(it[k]):'';
+  return '<input placeholder="指标名（如 水分）" value="'+esc(v('indicator'))+'" style="width:100%">'
+    +'<input placeholder="单位(%)" value="'+esc(v('unit'))+'" style="width:70px">'
+    +'<input placeholder="≥下限" type="number" step="any" value="'+esc(v('min_val'))+'" style="width:80px">'
+    +'<input placeholder="≤上限" type="number" step="any" value="'+esc(v('max_val'))+'" style="width:80px">'
+    +'<span style="display:flex;gap:4px;align-items:center"><label style="font-size:11px;color:var(--text-sub);white-space:nowrap"><input type="checkbox" class="ik">关键</label>'
+    +'<button class="btn btn-o btn-sm" onclick="this.closest(\'.item-row\').remove()">✕</button></span>';
+}
+function collectStdItems(containerId){
+  const rows=document.querySelectorAll('#'+containerId+' .item-row');
+  const items=[];
+  rows.forEach(r=>{
+    const inp=r.querySelectorAll('input');
+    const indicator=inp[0].value.trim();
+    if(!indicator)return;
+    items.push({indicator:indicator,unit:inp[1].value.trim(),
+      min_val:inp[2].value===''?null:Number(inp[2].value),
+      max_val:inp[3].value===''?null:Number(inp[3].value),
+      is_key:r.querySelector('.ik').checked?1:0});
+  });
+  return items;
+}
+async function saveStdCreate(){
+  const ctype=document.getElementById('sc-type').value;
+  const objSel=document.getElementById('sc-obj');
+  const otype=objSel.selectedOptions[0].dataset.type;
+  const oid=objSel.value;
+  const items=collectStdItems('sc-items');
+  const msg=document.getElementById('sc-msg');
+  if(!items.length){msg.innerHTML='<div class="alertbar alert-bad">请至少添加一个检验项目</div>';return}
+  try{
+    const r=await api('/api/qc-standards',{method:'POST',body:JSON.stringify({object_type:otype,object_id:Number(oid),check_type:ctype,items:items,sample_qty:1})});
+    msg.innerHTML='<div class="alertbar alert-ok">✔ 已保存 '+r.std_no+'！检验时选到该对象会自动带出 '+items.length+' 项。</div>';
+    loadStds();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+
+// ── 维护检验项（编辑）──
+async function showStdEdit(sid){
+  const det=await api('/api/qc-standards/'+sid);
+  const itemsHtml=det.items.map(it=>'<div class="item-row" data-id="'+it.id+'">'+itemRowHtml({indicator:it.indicator,unit:it.unit,min_val:it.min_val,max_val:it.max_val,method:it.method,is_key:it.is_key})+ '</div>').join('');
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span><h3>✏️ 维护检验项 · '+esc(det.std_no)+' '+esc(det.name)+' <span class="tag tag-blue">v'+det.version+'</span></h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">适用于：'+esc(det.object_name)+' · '+CT_NAMES[det.check_type]+'。修改自动留痕。</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">'
+    +'<label style="font-size:12.5px;color:var(--text-sub)">取样数/批</label><input id="ed-sq" type="number" min="1" value="'+det.sample_qty+'" style="width:70px;height:30px;border:1px solid #d6e4f3;border-radius:8px;padding:0 8px">'
+    +'<label style="font-size:12.5px;color:var(--text-sub);margin-left:10px">标准名称</label><input id="ed-name" value="'+esc(det.name)+'" style="flex:1;height:30px;border:1px solid #d6e4f3;border-radius:8px;padding:0 8px">'
+    +'<button class="btn btn-o btn-sm" onclick="edAddRow()">+ 加一项</button></div>'
+    +'<div style="display:grid;grid-template-columns:1.5fr .8fr .9fr .9fr .8fr;gap:6px;font-size:11.5px;color:var(--text-sub);padding:0 4px;margin-bottom:4px">'
+    +'<span>检验项目</span><span>单位</span><span>下限≥</span><span>上限≤</span><span>关键/删除</span></div>'
+    +'<div id="ed-items"></div>'
+    +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+    +'<button class="btn btn-p" onclick="saveStdEdit('+sid+','+det.version+')">✔ 保存（留痕）</button></div>'
+    +'<div style="margin-top:10px;border-top:1px dashed #e3edf8;padding-top:8px" id="ed-logs"></div>';
+  document.getElementById('modal-mask').classList.add('show');
+  document.getElementById('ed-items').innerHTML=itemsHtml;
+  loadStdLogs(sid,'ed-logs',3);
+}
+function edAddRow(){
+  const div=document.createElement('div');div.className='item-row';
+  div.innerHTML=itemRowHtml(null);
+  document.getElementById('ed-items').appendChild(div);
+}
+async function saveStdEdit(sid,oldVer){
+  const items=collectStdItems('ed-items');
+  const sq=parseInt(document.getElementById('ed-sq').value)||1;
+  const name=document.getElementById('ed-name').value.trim();
+  if(!items.length){toast('至少保留一个检验项目');return}
+  try{
+    const r=await api('/api/qc-standards/'+sid,{method:'PUT',body:JSON.stringify({items:items,sample_qty:sq,name:name})});
+    toast('✔ 已保存（版本 v'+(oldVer+1)+'，变更已留痕）');
+    closeModal();loadStds();
+  }catch(e){toast('✘ '+e.message)}
+}
+
+// ── 复制模板 ──
+async function showStdCopy(sid){
+  const det=await api('/api/qc-standards/'+sid);
+  await loadStdRefs();
+  const objOptions=det.object_type==='material'
+    ?STD_CACHE.mats.filter(m=>['原料','辅料'].includes(m.material_type)).map(m=>'<option value="'+m.id+'">'+esc(m.code+' '+m.name)+'</option>').join('')
+    :STD_CACHE.sts.map(s=>'<option value="'+s.id+'">'+esc(s.code+' '+s.name)+'（'+esc(s.workshop_name||'')+'）</option>').join('');
+  const objTypeName=det.object_type==='material'?'物料':'工序';
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span><h3>⧉ 复制标准模板</h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:12px">把 <b>'+esc(det.name)+'</b>（'+det.item_count+' 项）复制给同类对象，复制后仍可单独修改——适合"同类物料标准大体相同"的场景，不用重新敲。</div>'
+    +'<div class="field" style="margin-bottom:12px"><label>源标准</label><input value="'+esc(det.std_no+' '+det.name)+'" style="width:100%;height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px;background:#f6f9fd" readonly></div>'
+    +'<div class="field" style="margin-bottom:12px"><label>复制给哪个'+objTypeName+'</label><select id="cp-obj" style="width:100%;height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 8px">'+objOptions+'</select></div>'
+    +'<div class="field" style="margin-bottom:12px"><label>新标准名称（留空自动生成）</label><input id="cp-name" placeholder="如：'+esc(det.name.replace(det.object_name,'新对象'))+'" style="width:100%;height:34px;border:1px solid #d6e4f3;border-radius:8px;padding:0 10px"></div>'
+    +'<div style="text-align:right"><button class="btn btn-o" onclick="closeModal()">取消</button> <button class="btn btn-p" onclick="saveStdCopy('+sid+',\''+det.object_type+'\')">✔ 复制</button></div>';
+  document.getElementById('modal-mask').classList.add('show');
+}
+async function saveStdCopy(sid,otype){
+  const oid=document.getElementById('cp-obj').value;
+  const name=document.getElementById('cp-name').value.trim();
+  if(!oid){toast('请选择要复制给的对象');return}
+  try{
+    const r=await api('/api/qc-standards/'+sid+'/copy',{method:'POST',body:JSON.stringify({object_type:otype,object_id:Number(oid),name:name})});
+    toast('✔ 复制完成：'+r.std_no+'（记得进去按新对象微调限值）');
+    closeModal();loadStds();
+  }catch(e){toast('✘ '+e.message)}
+}
+
+// ── 留痕 ──
+async function loadStdLogs(sid,containerId,limit){
+  const rows=await api('/api/qc-standards/'+sid+'/logs');
+  const box=document.getElementById(containerId);
+  if(!box)return;
+  const show=rows.slice(0,limit||30);
+  box.innerHTML='<div style="font-size:12px;color:var(--text-sub);font-weight:600;margin-bottom:6px">📜 修改留痕（最近 '+show.length+' 条，谁改了什么一目了然）</div>'
+    +(show.length?show.map(l=>'<div style="font-size:12px;padding:4px 0;border-bottom:1px dashed #f0f5fa"><b>'+esc(l.username)+'</b> '+esc(l.time)+' · '+esc(l.detail||l.action)+'</div>').join('')
+      :'<div style="font-size:12px;color:#9aabc0">暂无记录</div>');
+}
+async function showStdLogs(sid){
+  const det=await api('/api/qc-standards/'+sid);
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span><h3>📜 修改留痕 · '+esc(det.std_no)+' '+esc(det.name)+'</h3><div id="lg-box"></div>';
+  document.getElementById('modal-mask').classList.add('show');
+  loadStdLogs(sid,'lg-box');
+}
+
+/* ═══════════ 来料检验闭环（第3步）═══════════ */
+const LOT_ST={0:'待取样',1:'待检验',2:'合格放行',3:'不合格冻结',4:'让步接收',5:'拒收退货',6:'报废'};
+const LOT_TAG={0:'gray',1:'blue',2:'green',3:'red',4:'warn',5:'gray',6:'gray'};
+const NCR_ST={0:'待处理',1:'已拒收退货',2:'已让步接收',3:'已报废'};
+
+async function renderIncomingPage(){
+  const mgr=canManage('incoming');
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='🚚 来料检验';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='流程：到货登记 → 取样 → 按标准检验 → 自动判定（合格放行 / 不合格冻结自动开 NCR）。不合格批次不能投料——系统拦截。';
+  c.appendChild(ttl);
+  const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+  btn.textContent='+ 到货登记';btn.onclick=()=>showLotCreate();
+  ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  c.appendChild(desc);
+  const filter=document.createElement('div');filter.className='panel';
+  filter.innerHTML='<div class="searchbar">'
+    +'<select id="f-lot-st" style="min-width:120px" onchange="loadLots()"><option value="">全部状态</option>'
+    +Object.keys(LOT_ST).map(k=>'<option value="'+k+'">'+LOT_ST[k]+'</option>').join('')+'</select>'
+    +'<input id="f-lot-kw" placeholder="搜批号（如 RA-）" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadLots()">'
+    +'<button class="btn btn-o" onclick="loadLots()">🔍 查询</button>'
+    +'<span style="font-size:12px;color:var(--text-sub)" id="lot-summary"></span></div>';
+  c.appendChild(filter);
+  const addbox=document.createElement('div');addbox.className='panel';addbox.id='addbox-lot';addbox.style.display='none';
+  c.appendChild(addbox);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>来料批号</th><th>物料</th><th>供应商</th><th>供应商批号</th><th>数量</th><th>状态</th><th>登记人/时间</th><th>操作</th></tr></thead><tbody id="tbody-lot"></tbody></table>';
+  c.appendChild(tbl);
+  loadLots();
+}
+
+async function showLotCreate(){
+  const box=document.getElementById('addbox-lot');
+  const [mats,sups]=await Promise.all([api('/api/material'),api('/api/supplier')]);
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">➕ 到货登记 —— 保存后自动生成来料批号（日期-RA-供应商-序号）</div>'
+    +'<div class="form-row">'
+    +'<div class="field"><label>物料</label><select id="lc-mat" style="min-width:200px">'
+    +mats.filter(m=>['原料','辅料'].includes(m.material_type)).map(m=>'<option value="'+m.id+'">'+esc(m.code+' '+m.name)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>供应商</label><select id="lc-sup" style="min-width:200px">'
+    +sups.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>供应商批号</label><input id="lc-sl" style="width:110px"></div>'
+    +'<div class="field"><label>数量</label><input id="lc-qty" type="number" step="0.1" value="10" style="width:80px"></div>'
+    +'<div class="field"><label>车牌(选填)</label><input id="lc-veh" style="width:100px"></div>'
+    +'<button class="btn btn-p" onclick="saveLot()">✔ 登记到货</button>'
+    +'<button class="btn btn-o" onclick="document.getElementById(\'addbox-lot\').style.display=\'none\'">收起</button>'
+    +'</div><div id="lc-msg" style="margin-top:8px"></div>';
+}
+async function saveLot(){
+  const msg=document.getElementById('lc-msg');
+  try{
+    const r=await api('/api/incoming',{method:'POST',body:JSON.stringify({
+      material_id:Number(document.getElementById('lc-mat').value),
+      supplier_id:Number(document.getElementById('lc-sup').value),
+      supplier_lot:document.getElementById('lc-sl').value.trim(),
+      qty:Number(document.getElementById('lc-qty').value)||0,
+      vehicle:document.getElementById('lc-veh').value.trim()})});
+    msg.innerHTML='<div class="alertbar alert-ok">✔ 已登记：<b>'+esc(r.lot_no)+'</b>，状态=待取样。下一步由取样员/检验员点"取样"。</div>';
+    document.getElementById('lc-msg').scrollIntoView({behavior:'smooth'});
+    loadLots();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+async function loadLots(){
+  const st=document.getElementById('f-lot-st')?document.getElementById('f-lot-st').value:'';
+  const kw=document.getElementById('f-lot-kw')?document.getElementById('f-lot-kw').value:'';
+  const rows=await api('/api/incoming?'+qs({status:st,keyword:kw}));
+  const tb=document.getElementById('tbody-lot');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-sub);padding:26px">暂无来料批次</td></tr>';return}
+  const mine=ME.role;
+  const canSample=['admin','qm','qc','sampler'].includes(mine);
+  const canTest=['admin','qm','qc'].includes(mine);
+  tb.innerHTML=rows.map(r=>{
+    let ops='';
+    if(r.status===0)ops='<button class="btn btn-o btn-sm" onclick="sampleLot('+r.id+',\''+esc(r.lot_no)+'\')">📤 取样</button>';
+    else if(r.status===1)ops='<button class="btn btn-p btn-sm" onclick="openTest('+r.id+',\''+esc(r.lot_no)+'\')">🧪 检验录入</button>';
+    else if(r.status===3&&r.ncr_no)ops='<span class="tag tag-red">已冻结·待处置</span>';
+    else if(r.status===2)ops='<span class="tag tag-green">✔ 已放行可用</span>';
+    else ops='';
+    if(!canSample&&!canTest&&r.status<2)ops='<span class="tag tag-gray">仅查看</span>';
+    return '<tr><td><span class="tag tag-blue">'+esc(r.lot_no)+'</span></td><td><b>'+esc(r.material_name)+'</b></td>'
+      +'<td>'+esc(r.supplier_name)+'</td><td>'+esc(r.supplier_lot||'—')+'</td><td>'+r.qty+' '+esc(r.unit)+'</td>'
+      +'<td><span class="tag tag-'+LOT_TAG[r.status]+'">'+LOT_ST[r.status]+'</span>'+(r.ncr_no?'<br><span class="tag tag-red">'+esc(r.ncr_no)+'</span>':'')+'</td>'
+      +'<td style="font-size:12px;color:var(--text-sub)">'+esc(r.arrival_by)+'<br>'+esc(r.created_at)+'</td><td>'+ops+'</td></tr>';
+  }).join('');
+  const sum=document.getElementById('lot-summary');
+  if(sum){
+    const all=await api('/api/incoming');
+    const wait=all.filter(x=>x.status===0).length, test=all.filter(x=>x.status===1).length,
+          bad=all.filter(x=>x.status===3).length;
+    sum.textContent='｜ 待取样 '+wait+' · 待检验 '+test+' · 冻结待处置 '+bad;
+  }
+}
+async function sampleLot(id,lotNo){
+  const qty=prompt('批次 '+lotNo+' 取样量（如：500g），直接确定即取样：','500g');
+  if(qty===null)return;
+  try{
+    const r=await api('/api/incoming/'+id+'/sample',{method:'POST',body:JSON.stringify({sample_qty:qty})});
+    toast('✔ 取样完成 '+r.sample_no+'，批次已转"待检验"');
+    loadLots();
+  }catch(e){toast('✘ '+e.message)}
+}
+
+// ── 检验录入 ──
+async function openTest(lotId,lotNo){
+  let form;
+  try{form=await api('/api/incoming/'+lotId+'/test-form')}
+  catch(e){toast('✘ '+e.message);return}
+  const box=document.getElementById('modal-box');
+  let itemsHtml='';
+  form.items.forEach((it,i)=>{
+    const lim=(it.min_val!=null||it.max_val!=null)
+      ?'<span style="color:var(--text-sub);font-size:11px">标准：'+(it.min_val!=null?'≥'+it.min_val:'')+(it.max_val!=null?' ≤'+it.max_val:'')+(it.unit?(' '+it.unit):'')+'</span>':'';
+    itemsHtml+='<div class="item-row" style="grid-template-columns:1.3fr 1.2fr .9fr 1fr">'
+      +'<div><b>'+esc(it.indicator)+'</b>'+(it.is_key?' <span class="tag tag-warn" style="font-size:10px">关键</span>':'')+'</div>'
+      +'<div style="font-size:12px;color:var(--text-sub)">'+lim+'<br>方法:'+esc(it.method||'—')+'</div>'
+      +'<input data-i="'+i+'" placeholder="实测值" oninput="liveJudge(this,'+i+')" style="width:90px">'
+      +'<div><span class="res res-wait" id="judge-'+i+'">⏳</span></div></div>';
+  });
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
+    +'<h3>🧪 检验录入 · '+esc(lotNo)+'</h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">按标准 <b>'+esc(form.std_no+' '+form.std_name)+'</b> 自动带出 '+form.items.length+' 项。录入时实时判定，超限自动标红；提交后系统复核判定。</div>'
+    +'<div id="test-items"></div>'
+    +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+    +'<button class="btn btn-p" onclick="submitTest('+lotId+','+form.std_id+')">✔ 提交检验</button></div>'
+    +'<div id="test-msg" style="margin-top:10px"></div>';
+  document.getElementById('test-items').innerHTML=itemsHtml;
+  // 保存标准限值供前端实时判定
+  window.__testForm=form;
+  document.getElementById('modal-mask').classList.add('show');
+}
+function liveJudge(el,i){
+  const it=window.__testForm.items[i];
+  const res=document.getElementById('judge-'+i);
+  const v=el.value.trim();
+  if(v===''){res.className='res res-wait';res.textContent='⏳';return}
+  if(it.min_val==null&&it.max_val==null){res.className='res res-pass';res.textContent='✔ 已填';return}
+  const n=parseFloat(v);
+  if(isNaN(n)){res.className='res res-fail';res.textContent='✘ 非数字';return}
+  const ok=(it.min_val==null||n>=it.min_val)&&(it.max_val==null||n<=it.max_val);
+  res.className=ok?'res res-pass':'res res-fail';
+  res.textContent=ok?'✔ 合格':'✘ 超限';
+}
+async function submitTest(lotId,stdId){
+  const rows=document.querySelectorAll('#test-items .item-row');
+  const items=[];
+  rows.forEach(r=>{
+    const name=r.querySelector('b').textContent.replace('关键','').trim();
+    const inp=r.querySelector('input');
+    if(name&&inp.value.trim()!=='')items.push({indicator:name,actual:inp.value.trim()});
+  });
+  const msg=document.getElementById('test-msg');
+  if(!items.length){msg.innerHTML='<div class="alertbar alert-bad">请至少录入一个实测值</div>';return}
+  try{
+    const r=await api('/api/incoming/'+lotId+'/test',{method:'POST',body:JSON.stringify({std_id:stdId,items:items})});
+    if(r.result===1){
+      msg.innerHTML='<div class="alertbar alert-ok">✔ 判定：<b>合格</b> —— 该批已放行，可用于投料。</div>';
+      toast('✔ 检验合格，批次已放行');
+    }else{
+      msg.innerHTML='<div class="alertbar alert-bad">✘ 判定：<b>不合格</b> —— 批次已冻结，自动生成 <b>'+esc(r.ncr_no)+'</b>。<br><span style="font-size:12px">'+esc(r.fail_summary)+'</span></div>';
+      toast('✘ 不合格，已开 NCR '+r.ncr_no);
+    }
+    setTimeout(()=>{closeModal();loadLots()},1800);
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+
+// ── 不合格处理 NCR ──
+async function renderNcrPage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='⚠️ 不合格处理（NCR）';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='检验不合格自动生成 NCR。处置：拒收退货（采购）→ 让步接收（质量经理审批）→ 报废（质量经理审批）。检验员不能处置自己检出的不合格。';
+  c.appendChild(ttl);
+  c.appendChild(desc);
+  const filter=document.createElement('div');filter.className='panel';
+  filter.innerHTML='<div class="searchbar">'
+    +'<select id="f-ncr-st" style="min-width:120px" onchange="loadNcrs()"><option value="">全部状态</option>'
+    +Object.keys(NCR_ST).map(k=>'<option value="'+k+'">'+NCR_ST[k]+'</option>').join('')+'</select>'
+    +'<input id="f-ncr-kw" placeholder="搜批号" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadNcrs()">'
+    +'<button class="btn btn-o" onclick="loadNcrs()">🔍 查询</button>'
+    +'<span style="font-size:12px;color:var(--text-sub)" id="ncr-sum"></span></div>';
+  c.appendChild(filter);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>NCR 号</th><th>来料批号</th><th>物料</th><th>不合格项</th><th>状态</th><th>发起人/时间</th><th>操作</th></tr></thead><tbody id="tbody-ncr"></tbody></table>';
+  c.appendChild(tbl);
+  loadNcrs();
+}
+async function loadNcrs(){
+  const st=document.getElementById('f-ncr-st')?document.getElementById('f-ncr-st').value:'';
+  const kw=document.getElementById('f-ncr-kw')?document.getElementById('f-ncr-kw').value:'';
+  const rows=await api('/api/ncr?'+qs({status:st,keyword:kw}));
+  const tb=document.getElementById('tbody-ncr');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-sub);padding:26px">暂无 NCR</td></tr>';return}
+  const mine=ME.role;
+  const canReject=['admin','qm','buyer'].includes(mine);
+  const canApprove=['admin','qm'].includes(mine);
+  tb.innerHTML=rows.map(r=>{
+    let ops='';
+    if(r.status===0){
+      if(canReject)ops+='<button class="btn btn-o btn-sm" onclick="disposeNcr('+r.id+',\'reject\',\''+esc(r.ncr_no)+'\')">🚫 拒收退货</button> ';
+      if(canApprove)ops+='<button class="btn btn-s btn-sm" onclick="disposeNcr('+r.id+',\'waive\',\''+esc(r.ncr_no)+'\')">🤝 让步接收</button> ';
+      if(canApprove)ops+='<button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="disposeNcr('+r.id+',\'scrap\',\''+esc(r.ncr_no)+'\')">🗑 报废</button>';
+      if(!ops)ops='<span class="tag tag-gray">待质量/采购处置</span>';
+    }else{
+      ops='<span class="tag tag-gray">已处置</span>';
+    }
+    return '<tr><td><span class="tag tag-red">'+esc(r.ncr_no)+'</span></td><td><span class="tag tag-blue">'+esc(r.lot_no)+'</span></td>'
+      +'<td><b>'+esc(r.material_name)+'</b></td><td style="max-width:340px;white-space:normal;font-size:12.5px;color:var(--bad)">'+esc(r.fail_summary)+'</td>'
+      +'<td><span class="tag tag-'+(r.status===0?'red':'gray')+'">'+NCR_ST[r.status]+'</span></td>'
+      +'<td style="font-size:12px;color:var(--text-sub)">'+esc(r.created_by)+'<br>'+esc(r.created_at)+'</td><td>'+ops+'</td></tr>';
+  }).join('');
+  const sum=document.getElementById('ncr-sum');
+  if(sum){const all=await api('/api/ncr');sum.textContent='｜ 待处理 '+all.filter(x=>x.status===0).length+' 条'}
+}
+async function disposeNcr(id,type,ncrNo){
+  const names={reject:'拒收退货（退供应商）',waive:'让步接收（特批放行）',scrap:'报废处理'};
+  if(type==='waive'&&!confirm('⚠️ 让步接收需质量经理审批。确认对该 NCR 让步接收？此操作将放行该批。'))return;
+  if(type==='scrap'&&!confirm('确认报废该批？此操作不可逆。'))return;
+  if(type==='reject'&&!confirm('确认拒收退货？该批将退回供应商。'))return;
+  const remark=prompt('处置说明（'+names[type]+'）：',type==='reject'?'通知供应商退货处理':type==='waive'?'偏差在可接受范围，特批使用':'不合格报废');
+  if(remark===null)return;
+  try{
+    await api('/api/ncr/'+id+'/dispose',{method:'POST',body:JSON.stringify({disposition:type,remark})});
+    toast('✔ 已处置：'+names[type]);
+    loadNcrs();loadLots();
+  }catch(e){toast('✘ '+e.message)}
+}
+
+/* ═══════════ 启动 ═══════════ */
+if(!autoLogin())showLogin();
+</script>
+</body>
+</html>
