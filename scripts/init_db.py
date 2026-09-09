@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """第1步：建库 + 全套演示数据（物料用用户提供的真实清单）"""
-import hashlib, os, re, secrets, sys
+import hashlib, json, os, re, secrets, sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -432,10 +432,16 @@ def seed_production(db):
     ipqc8 = get_std("station", sts["ST08"].id, "ipqc", "除磁包装-过程检验标准")
     tr_ipqc8 = make_test(p5.id, ipqc8, "qc2")
     tr_oqc = make_test(p5.id, oqc1, "qc2")
+    # COA 明细快照：与后端 _issue_coa 一致（此后 OQC 标准改动不影响历史报告）
+    snap = [{"indicator": ti.indicator, "actual": ti.actual, "unit": ti.unit,
+             "min_val": ti.min_val, "max_val": ti.max_val, "pass": ti.pass_flag}
+            for ti in db.query(TestItem).filter(TestItem.test_id == tr_oqc.id)
+               .order_by(TestItem.seq).all()]
     db.add(Coa(coa_no=f"COA-{today}-{next_seq('COA'):03d}", prod_id=p5.id,
                customer_id=db.query(Customer).filter(Customer.code == "CUS-001").first().id,
-               test_id=tr_oqc.id, items_json="[]", result=1, issued_by="qm",
-               created_at=now))
+               test_id=tr_oqc.id,
+               items_json=json.dumps(snap, ensure_ascii=False),
+               result=1, issued_by="qm", created_at=now))
 
     # P6: ST05 再来一批（父=P2）→ 故意 IPQC 不合格 → 冻结 + NCR(prod)
     p6 = ProductionLot(lot_no=lot_no("ST05", "EQ008", next_seq("ST05"), p2.lot_no, "乙"),
