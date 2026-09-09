@@ -207,19 +207,22 @@ class Sample(Base):
 
 
 class TestRecord(Base):
-    """检验单头：一次检验=一批×一套标准"""
+    """检验单头：一次检验=一个批次×一套标准
+    obj: lot_id→来料批(incoming_lot)；prod_id→生产批(production_lot)；成品检验也挂生产批(末道工序)"""
     __tablename__ = "test_record"
     id = Column(Integer, primary_key=True)
     test_no = Column(String(60), unique=True, nullable=False)     # T-YYYYMMDD-NNN
-    lot_id = Column(Integer, ForeignKey("incoming_lot.id"), nullable=False, index=True)
+    lot_id = Column(Integer, ForeignKey("incoming_lot.id"), nullable=True, index=True)
+    prod_id = Column(Integer, ForeignKey("production_lot.id"), nullable=True, index=True)
     sample_id = Column(Integer, nullable=True)
     std_id = Column(Integer, ForeignKey("qc_standard.id"), nullable=False)  # 用的哪套标准
-    check_type = Column(String(10), default="iqc")
+    check_type = Column(String(10), default="iqc")               # iqc/ipqc/oqc
     result = Column(Integer, default=0)               # 0待定/检验中 1合格 2不合格
     tested_by = Column(String(50), default="")
     remark = Column(String(300), default="")
     created_at = Column(DateTime, default=datetime.now)
     lot = relationship("IncomingLot")
+    prod = relationship("ProductionLot")
 
 
 class TestItem(Base):
@@ -240,12 +243,14 @@ class TestItem(Base):
 
 
 class Ncr(Base):
-    """不合格处理单（第3步简化版）：检验不合格自动生成
-    status: 0待处理(采购/质量) 1拒收退货(采购处理完) 2让步接收(质量经理批) 3报废(质量经理批)"""
+    """不合格处理单（第3/4步）：检验不合格自动生成
+    obj: lot_id→来料批；prod_id→生产批(过程/成品)
+    status: 0待处理(采购/质量) 1已拒收退货 2已让步接收 3已报废"""
     __tablename__ = "ncr"
     id = Column(Integer, primary_key=True)
     ncr_no = Column(String(60), unique=True, nullable=False)      # NCR-YYYY-NNN
-    lot_id = Column(Integer, ForeignKey("incoming_lot.id"), nullable=False, index=True)
+    lot_id = Column(Integer, ForeignKey("incoming_lot.id"), nullable=True, index=True)
+    prod_id = Column(Integer, ForeignKey("production_lot.id"), nullable=True, index=True)
     test_id = Column(Integer, nullable=True)
     fail_summary = Column(String(500), default="")    # 不合格项汇总
     disposition = Column(String(20), default="")      # reject/waive/scrap
@@ -256,3 +261,46 @@ class Ncr(Base):
     remark = Column(String(300), default="")
     created_at = Column(DateTime, default=datetime.now)
     lot = relationship("IncomingLot")
+    prod = relationship("ProductionLot")
+
+
+class ProductionLot(Base):
+    """生产批次（第4步）：车间完工登记=班组长建批；批号沿化工溯源规则
+    YYYYMMDD-STXX-EQXX-NNN-[父批]-班组
+    status: 1待过程检验 2过程合格(可流入下工序) 3不合格冻结
+            4待成品检验(末道工序且过程合格) 5成品检验合格(可出COA) 6成品不合格冻结"""
+    __tablename__ = "production_lot"
+    id = Column(Integer, primary_key=True)
+    lot_no = Column(String(120), unique=True, nullable=False)
+    station_id = Column(Integer, ForeignKey("station.id"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True)
+    team_id = Column(Integer, ForeignKey("team.id"), nullable=True)
+    material_id = Column(Integer, ForeignKey("material.id"), nullable=True)  # 产出物料(末道=成品)
+    # 父批：原料批 或 上工序生产批（唯一约束：父批必须合格）
+    parent_type = Column(String(10), default="")       # incoming / production
+    parent_lot_no = Column(String(120), default="")    # 父批号（展示用）
+    qty = Column(Float, default=0)
+    unit = Column(String(20), default="kg")
+    status = Column(Integer, default=1)                # 见类注释
+    operator = Column(String(50), default="")          # 班组长/完工登记人
+    remark = Column(String(300), default="")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now)
+    station = relationship("Station")
+    equipment = relationship("Equipment")
+    team = relationship("Team")
+    material = relationship("Material")
+
+
+class Coa(Base):
+    """成品检验报告 COA（第4步）：成品批 OQC 合格后生成，明细为快照 JSON"""
+    __tablename__ = "coa"
+    id = Column(Integer, primary_key=True)
+    coa_no = Column(String(60), unique=True, nullable=False)      # COA-YYYYMMDD-NNN
+    prod_id = Column(Integer, ForeignKey("production_lot.id"), nullable=False, index=True)
+    customer_id = Column(Integer, ForeignKey("customer.id"), nullable=True)  # 空=按通用成品标准
+    test_id = Column(Integer, nullable=True)          # 来源 OQC 检验单
+    items_json = Column(Text, default="[]")           # 检验明细快照
+    result = Column(Integer, default=1)               # 1合格
+    issued_by = Column(String(50), default="")
+    created_at = Column(DateTime, default=datetime.now)

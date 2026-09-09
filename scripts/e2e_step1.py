@@ -47,9 +47,9 @@ check("错误密码被拒", bad.get("_err") == 401)
 def keys(d):
     return sorted([m["key"] for m in d.get("menus", [])])
 
-check("admin 可见全部12页", keys(admin) == sorted(
-    ["dashboard", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
-check("qc(检验员) 只可见6页且无账号管理", keys(qc) == sorted(["dashboard", "qcstandard", "incoming", "ncr", "material", "equipment"]), str(keys(qc)))
+check("admin 可见全部13页", keys(admin) == sorted(
+    ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
+check("qc(检验员) 只可见7页且无账号管理", keys(qc) == sorted(["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "equipment"]), str(keys(qc)))
 check("store(仓储) 无供应商管理", "supplier" not in keys(store), str(keys(store)))
 check("buyer(采购) 可管理 supplier", any(m["key"] == "supplier" and m["manage"] for m in buyer.get("menus", [])))
 check("qm(质量经理) 可管理 material", any(m["key"] == "material" and m["manage"] for m in qm.get("menus", [])))
@@ -66,7 +66,7 @@ check("qc 写物料被拒 403（越权拦截）", over.get("_err") == 403, str(o
 # ═══ 2. 基础资料 CRUD ═══
 print("══ 2. 基础资料 CRUD ══")
 mats = call("GET", "/api/material", token=AT)
-check("物料列表返回7条演示数据", len(mats) == 7, f"实际 {len(mats)}")
+check("物料列表返回9条演示数据", len(mats) == 9, f"实际 {len(mats)}")
 names = [m["name"] for m in mats]
 for expect in ["七水硫酸亚铁", "磷酸一铵", "85%磷酸", "双氧水", "木质纤维素", "硅藻土", "硫酸"]:
     check(f"物料含 {expect}", expect in names)
@@ -91,11 +91,11 @@ check("编辑物料成功", upd.get("ok") is True)
 del_ = call("DELETE", f"/api/material/{mid}", token=AT)
 check("停用物料成功(软删)", del_.get("ok") is True)
 mats2 = call("GET", "/api/material", token=AT)
-check("停用后列表不含该物料", len(mats2) == 7)
+check("停用后列表不含该物料", len(mats2) == 9)
 
 # 关键字搜索
 sr = call("GET", "/api/material?" + urllib.parse.urlencode({"keyword": "磷酸"}), token=AT)
-check("关键字搜索'磷酸'命中2条演示数据", len(sr) == 2, f"{len(sr)} 条")
+check("关键字搜索'磷酸'命中4条演示数据(含磷酸铁成品)", len(sr) == 4, f"{len(sr)} 条")
 
 # ═══ 3. Excel 导入（CSV 模拟，30 行） ═══
 print("══ 3. Excel/CSV 批量导入 ══")
@@ -123,7 +123,7 @@ with urllib.request.urlopen(req) as r:
 check("导入30行成功+1行缺编码报错", imp.get("inserted") == 30 and imp.get("error_count") == 1,
       json.dumps(imp, ensure_ascii=False)[:150])
 mats3 = call("GET", "/api/material", token=AT)
-check("导入后物料共37条", len(mats3) == 37, f"实际 {len(mats3)}")
+check("导入后物料共39条", len(mats3) == 39, f"实际 {len(mats3)}")
 
 # 模板下载
 req = urllib.request.Request(BASE + "/api/templates/material.csv")
@@ -151,7 +151,7 @@ check("新密码可登录(但已停用→403, 说明停用优先)", login_pwd.ge
 
 # 总览
 ov = call("GET", "/api/overview", token=AT)
-check("总览计数正常", ov.get("material") == 37 and ov.get("station") == 10)
+check("总览计数正常", ov.get("material") == 39 and ov.get("station") == 10)
 
 print()
 print(f"════ 结果: {len(PASS)} 通过 / {len(FAIL)} 失败 ════")

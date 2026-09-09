@@ -4,7 +4,7 @@
 + Excel 导入/模板下载 + 账号管理 + 审计日志
 启动: python main.py  → http://localhost:8000
 """
-import csv, hashlib, io, json, os, secrets, sys, uuid, urllib.parse
+import csv, hashlib, io, json, os, re, secrets, sys, uuid, urllib.parse
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +34,7 @@ TOKEN_TTL_HOURS = 12
 # 页面 key → (菜单显示名, 分组, 图标)
 PAGES = {
     "dashboard":   ("📊 质量总览", "总览", ""),
+    "prodlot":     ("🏭 生产批次", "生产制造", "prodlot"),
     "qcstandard":  ("📋 检验标准库", "质量管控", "qcstandard"),
     "incoming":    ("🚚 来料检验", "质量管控", "incoming"),
     "ncr":         ("⚠️ 不合格处理", "质量管控", "ncr"),
@@ -49,18 +50,19 @@ PAGES = {
 # 角色 → 可访问页面
 ROLE_PAGES = {
     "admin":     list(PAGES.keys()),
-    "boss":      ["dashboard", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
-    "qm":        ["dashboard", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
-    "qc":        ["dashboard", "qcstandard", "incoming", "ncr", "material", "equipment"],
+    "boss":      ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
+    "qm":        ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
+    "qc":        ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "equipment"],
     "sampler":   ["dashboard", "incoming", "material"],
-    "prodlead":  ["dashboard", "qcstandard", "workshop", "station", "equipment", "team"],
+    "prodlead":  ["dashboard", "prodlot", "qcstandard", "workshop", "station", "equipment", "team"],
     "buyer":     ["dashboard", "incoming", "ncr", "material", "supplier", "customer"],
     "store":     ["dashboard", "incoming", "ncr", "material", "customer", "workshop"],
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
-    "admin":   ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "user", "qcstandard", "incoming", "ncr"],
-    "qm":      ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "qcstandard", "incoming", "ncr"],
+    "admin":   ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "user", "qcstandard", "incoming", "ncr", "prodlot"],
+    "qm":      ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "qcstandard", "incoming", "ncr", "prodlot"],
+    "prodlead": ["prodlot"],
     "buyer":   ["supplier", "incoming", "ncr"],
 }
 
@@ -772,30 +774,11 @@ def _judge_value(actual, lo, hi):
     return True, ""
 
 
-@app.post("/api/incoming/{lot_id}/test")
-def incoming_test(lot_id: int, body: TestIn, token: str = Header(""),
-                  db: Session = Depends(get_db)):
-    """提交检验：后端按标准限值逐项判定 → 全合格放行 / 有不合格自动生成 NCR 并冻结"""
-    u = require_user(token, db)
-    require_page(u, "incoming")
-    _require_action(u, ["admin", "qm", "qc"])       # 检验员/质检提交
-    lot = db.get(M.IncomingLot, lot_id)
-    if not lot:
-        raise HTTPException(404, "批次不存在")
-    if lot.status != 1:
-        raise HTTPException(400, f"该批当前状态为{LOT_STATUS.get(lot.status)}，只有待检验批次可提交检验")
-    std = db.get(M.QcStandard, body.std_id)
-    if not std:
-        raise HTTPException(400, "标准不存在")
-    std_items = {it.indicator: it for it in db.query(M.QcStandardItem).filter(
-        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1).all()}
-    today = datetime.now().strftime("%Y%m%d")
-    test_no = _next_no(db, M.TestRecord, "test_no", f"T-{today}-")
-    tr = M.TestRecord(test_no=test_no, lot_id=lot.id, std_id=std.id,
-                      check_type="iqc", result=0, tested_by=u.username)
-    db.add(tr); db.flush()
+def _judge_and_fill(db, tr, std_items, body_items):
+    """通用：按标准逐项判定并写入 TestItem。返回 (fail_parts, fail_n, judged_n)
+    三类检验（来料/过程/成品）共用，保证判定逻辑只有一份。"""
     fail_parts, fail_n, judged_n = [], 0, 0
-    for seq, it in enumerate(body.items, start=1):
+    for seq, it in enumerate(body_items, start=1):
         indicator = (it.get("indicator") or "").strip()
         actual = str(it.get("actual", "")).strip()
         if not indicator:
@@ -819,6 +802,32 @@ def incoming_test(lot_id: int, body: TestIn, token: str = Header(""),
             if lo is not None: lim.append(f"≥{lo}")
             if hi is not None: lim.append(f"≤{hi}")
             fail_parts.append(f"{indicator} 实测{actual}（标准{'/'.join(lim) or s.unit}）{note}")
+    return fail_parts, fail_n, judged_n
+
+
+@app.post("/api/incoming/{lot_id}/test")
+def incoming_test(lot_id: int, body: TestIn, token: str = Header(""),
+                  db: Session = Depends(get_db)):
+    """提交检验：后端按标准限值逐项判定 → 全合格放行 / 有不合格自动生成 NCR 并冻结"""
+    u = require_user(token, db)
+    require_page(u, "incoming")
+    _require_action(u, ["admin", "qm", "qc"])       # 检验员/质检提交
+    lot = db.get(M.IncomingLot, lot_id)
+    if not lot:
+        raise HTTPException(404, "批次不存在")
+    if lot.status != 1:
+        raise HTTPException(400, f"该批当前状态为{LOT_STATUS.get(lot.status)}，只有待检验批次可提交检验")
+    std = db.get(M.QcStandard, body.std_id)
+    if not std:
+        raise HTTPException(400, "标准不存在")
+    std_items = {it.indicator: it for it in db.query(M.QcStandardItem).filter(
+        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1).all()}
+    today = datetime.now().strftime("%Y%m%d")
+    test_no = _next_no(db, M.TestRecord, "test_no", f"T-{today}-")
+    tr = M.TestRecord(test_no=test_no, lot_id=lot.id, std_id=std.id,
+                      check_type="iqc", result=0, tested_by=u.username)
+    db.add(tr); db.flush()
+    fail_parts, fail_n, judged_n = _judge_and_fill(db, tr, std_items, body.items)
     if judged_n == 0:
         db.delete(tr); db.commit()
         raise HTTPException(400, "没有可判定的检验项（请按模板逐项录入实测值）")
@@ -904,15 +913,32 @@ def ncr_list(status: str = "", keyword: str = "", token: str = Header(""),
     if status != "" and status is not None:
         q = q.filter(M.Ncr.status == int(status))
     if keyword:
-        q = q.join(M.IncomingLot).filter(M.IncomingLot.lot_no.like(f"%{keyword}%"))
+        # 关键字搜索：来料批号 or 生产批号（LEFT 各自匹配）
+        q = q.outerjoin(M.IncomingLot).outerjoin(M.ProductionLot).filter(
+            M.IncomingLot.lot_no.like(f"%{keyword}%") | M.ProductionLot.lot_no.like(f"%{keyword}%"))
     rows = q.order_by(M.Ncr.id.desc()).limit(200).all()
     out = []
     for ncr in rows:
-        lot = ncr.lot or db.get(M.IncomingLot, ncr.lot_id)
-        m = db.get(M.Material, lot.material_id) if lot else None
+        lot = ncr.lot or db.get(M.IncomingLot, ncr.lot_id) if ncr.lot_id else None
+        prod = ncr.prod or db.get(M.ProductionLot, ncr.prod_id) if ncr.prod_id else None
+        m = None
+        lot_no, mat_name = "", ""
+        if lot:
+            lot_no = lot.lot_no
+            m = db.get(M.Material, lot.material_id) if lot.material_id else None
+            mat_name = m.name if m else ""
+        elif prod:
+            lot_no = prod.lot_no
+            m = db.get(M.Material, prod.material_id) if prod.material_id else None
+            mat_name = f"{m.name}（{m.code}）" if m else ""
+            # 生产批 NCR：显示工序来源更直观
+            st = db.get(M.Station, prod.station_id) if prod.station_id else None
+            if st:
+                mat_name = f"{mat_name}·{st.name}" if mat_name else st.name
         out.append({"id": ncr.id, "ncr_no": ncr.ncr_no,
-                    "lot_no": lot.lot_no if lot else "",
-                    "material_name": m.name if m else "",
+                    "lot_no": lot_no,
+                    "material_name": mat_name,
+                    "source": "incoming" if lot else "production",
                     "supplier_id": lot.supplier_id if lot else None,
                     "fail_summary": ncr.fail_summary,
                     "status": ncr.status,
@@ -943,33 +969,384 @@ def ncr_dispose(nid: int, body: NcrDisposeIn, token: str = Header(""),
     d = body.disposition
     if d not in ("reject", "waive", "scrap"):
         raise HTTPException(400, "处置类型须为 reject/waive/scrap")
-    # 权限矩阵
-    if d == "reject":
-        _require_action(u, ["admin", "qm", "buyer"])     # 采购主导退货
-        lot_status, ncr_status = 5, 1
-    elif d == "waive":
-        _require_action(u, ["admin", "qm"])              # 让步接收=质量经理审批
-        lot_status, ncr_status = 4, 2
+    # 权限矩阵：来料 NCR 按原规则；生产批 NCR 没有"退货"，reject 等价报废(冻结)，
+    # waive(让步放行)与 scrap(报废) 仅质量经理
+    lot_status, prod_status, ncr_status = None, None, None
+    if ncr.prod_id:
+        if d == "reject":
+            # 生产批不退货：采购无权处置生产批不合格，须质量经理
+            _require_action(u, ["admin", "qm"])
+            prod_status, ncr_status = 3, 3          # 保持冻结=报废处置
+        elif d == "waive":
+            _require_action(u, ["admin", "qm"])
+            prod_status, ncr_status = None, 2       # 让步放行（回合格态由前端指定/默认2）
+        else:
+            _require_action(u, ["admin", "qm"])
+            prod_status, ncr_status = 3, 3
     else:
-        _require_action(u, ["admin", "qm"])              # 报废=质量经理审批
-        lot_status, ncr_status = 6, 3
+        if d == "reject":
+            _require_action(u, ["admin", "qm", "buyer"])     # 采购主导退货
+            lot_status, ncr_status = 5, 1
+        elif d == "waive":
+            _require_action(u, ["admin", "qm"])              # 让步接收=质量经理审批
+            lot_status, ncr_status = 4, 2
+        else:
+            _require_action(u, ["admin", "qm"])              # 报废=质量经理审批
+            lot_status, ncr_status = 6, 3
     ncr.disposition = d
     ncr.status = ncr_status
     ncr.handled_by = u.username
     ncr.handled_at = datetime.now()
     ncr.remark = body.remark.strip()
-    lot = db.get(M.IncomingLot, ncr.lot_id)
-    if lot:
-        lot.status = lot_status
-        lot.updated_at = datetime.now()
+    if ncr.lot_id:
+        lot = db.get(M.IncomingLot, ncr.lot_id)
+        if lot:
+            lot.status = lot_status
+            lot.updated_at = datetime.now()
+    if ncr.prod_id:
+        prod = db.get(M.ProductionLot, ncr.prod_id)
+        if prod:
+            # waive=让步放行回可用(2 过程合格或 5 成品合格由原状态决定)；scrap/reject 保持冻结
+            if d == "waive":
+                prod.status = 5 if prod.status == 6 else 2
+            prod.updated_at = datetime.now()
     db.commit()
     audit(db, u.username, "update", f"ncr:{ncr.ncr_no}",
           f"处置={d} {body.remark.strip()}")
     db.commit()
     return {"ok": True, "lot_status": lot_status, "ncr_status": ncr_status}
 
+# ═══════════════════════ 生产批次/过程检验/成品检验（第4步）═══════════════════════
+PROD_STATUS = {1: "待过程检验", 2: "过程合格", 3: "过程不合格冻结",
+               4: "待成品检验", 5: "成品合格", 6: "成品不合格冻结"}
+COA_CHECK_TYPES = {"ipqc": "过程检验", "oqc": "成品检验"}
+
+
+def _prod_out(db, p):
+    st = db.get(M.Station, p.station_id)
+    eq = db.get(M.Equipment, p.equipment_id) if p.equipment_id else None
+    team = db.get(M.Team, p.team_id) if p.team_id else None
+    mat = db.get(M.Material, p.material_id) if p.material_id else None
+    coa = db.query(M.Coa).filter(M.Coa.prod_id == p.id).order_by(M.Coa.id.desc()).first()
+    latest = db.query(M.TestRecord).filter(M.TestRecord.prod_id == p.id) \
+        .order_by(M.TestRecord.id.desc()).first()
+    ncr = db.query(M.Ncr).filter(M.Ncr.prod_id == p.id).order_by(M.Ncr.id.desc()).first()
+    return {
+        "id": p.id, "lot_no": p.lot_no,
+        "station_id": p.station_id,
+        "station_name": st.name if st else "",
+        "station_code": st.code if st else "",
+        "equipment_id": p.equipment_id,
+        "equipment_name": eq.name if eq else "",
+        "team_name": team.name if team else "",
+        "material_id": p.material_id,
+        "material_name": f"{mat.name}（{mat.code}）" if mat else "",
+        "material_type": mat.material_type if mat else "",
+        "parent_type": p.parent_type, "parent_lot_no": p.parent_lot_no,
+        "qty": p.qty, "unit": p.unit, "status": p.status,
+        "status_name": PROD_STATUS.get(p.status, str(p.status)),
+        "operator": p.operator,
+        "remark": p.remark,
+        "created_at": p.created_at.strftime("%Y-%m-%d %H:%M") if p.created_at else "",
+        "coa_no": coa.coa_no if coa else None,
+        "latest_result": latest.result if latest else None,
+        "ncr_no": ncr.ncr_no if ncr else None,
+    }
+
+
+def _prev_stations(db, station_id):
+    """上工序：next_station_id == 本工序的工序（父批必须是它产的合格批）"""
+    return [st.id for st in db.query(M.Station).filter(M.Station.next_station_id == station_id).all()]
+
+
+def _usable_parent_check(db, lot, station_id, parent_type, parent_lot_no):
+    """父批可用性校验（第4步核心防错）：
+    首工序（无上工序）→ 父批必须是合格/让步的原料批；
+    有上工序 → 父批必须是上工序产出的过程合格生产批。"""
+    prevs = _prev_stations(db, station_id)
+    if not prevs:
+        # 首工序：父 = 原料批（合格放行 2 / 让步接收 4）
+        src = db.query(M.IncomingLot).filter(M.IncomingLot.lot_no == parent_lot_no).first()
+        if not src:
+            raise HTTPException(400, "父批不存在（首工序父批须为已登记的原料批号）")
+        if src.status not in (2, 4):
+            raise HTTPException(400, f"父原料批当前状态为{LOT_STATUS.get(src.status)}，须为合格放行或让步接收")
+        return src
+    # 有上工序：父 = 上工序产出的生产批（过程合格 2 / 成品合格 5 均可继续加工）
+    src = db.query(M.ProductionLot).filter(M.ProductionLot.lot_no == parent_lot_no).first()
+    if not src:
+        raise HTTPException(400, "父批不存在（该工序父批须为上工序的生产批号）")
+    if src.station_id not in prevs:
+        raise HTTPException(400, "父批不是本工序的上一道工序产出，禁止引用")
+    if src.status not in (2, 5):
+        raise HTTPException(400, f"父生产批当前状态为{PROD_STATUS.get(src.status)}，须为合格批次")
+    return src
+
+
+class ProdLotIn(BaseModel):
+    station_id: int
+    equipment_id: int | None = None
+    team_id: int | None = None
+    material_id: int | None = None
+    parent_type: str = ""         # incoming / production
+    parent_lot_no: str = ""
+    qty: float = 0
+    remark: str = ""
+
+
+@app.get("/api/production-lots")
+def prod_list(status: str = "", keyword: str = "", station_id: str = "",
+              token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    q = db.query(M.ProductionLot)
+    if status != "" and status is not None:
+        q = q.filter(M.ProductionLot.status == int(status))
+    if station_id != "" and station_id is not None:
+        q = q.filter(M.ProductionLot.station_id == int(station_id))
+    if keyword:
+        q = q.filter(M.ProductionLot.lot_no.like(f"%{keyword}%"))
+    rows = q.order_by(M.ProductionLot.id.desc()).limit(300).all()
+    return [_prod_out(db, p) for p in rows]
+
+
+@app.post("/api/production-lots")
+def prod_create(body: ProdLotIn, token: str = Header(""), db: Session = Depends(get_db)):
+    """班组长建批（=完工登记）：选 工序/设备/班组/产出物料/父批。
+    批号：YYYYMMDD-STXX-EQXX-NNN-[父批]-班组（沿用化工溯源规则）"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    _require_action(u, ["admin", "qm", "prodlead"])
+    st = db.get(M.Station, body.station_id)
+    if not st:
+        raise HTTPException(400, "工序不存在")
+    if body.equipment_id:
+        eq = db.get(M.Equipment, body.equipment_id)
+        if not eq or eq.station_id != st.id:
+            raise HTTPException(400, "设备不存在或不属于该工序")
+    parent_src = _usable_parent_check(db, None, st.id, body.parent_type, body.parent_lot_no.strip())
+    if not body.material_id and parent_src:
+        # 默认产出 = 首工序父原料本身；非首工序必须显式（多为中间料，无物料档案则留空）
+        pass
+    team = db.get(M.Team, body.team_id) if body.team_id else None
+    today = datetime.now().strftime("%Y%m%d")
+    st_code = st.code if st.code.startswith("ST") else "ST" + st.code
+    eq_code = (db.get(M.Equipment, body.equipment_id).code
+               if body.equipment_id else "NA")
+    eq_tail = "".join(ch for ch in eq_code if ch.isdigit())[-2:].zfill(2)
+    st_tail = st_code[-2:]
+    prefix = f"{today}-ST{st_tail}-EQ{eq_tail}-"
+    # 序号按 当天+工序 顺延
+    rows = db.query(M.ProductionLot).filter(M.ProductionLot.lot_no.like(prefix + "%")).all()
+    mx = 0
+    for r in rows:
+        tail = r.lot_no[len(prefix):]
+        try:
+            mx = max(mx, int(tail.split("-")[0]))
+        except ValueError:
+            pass
+    seq = mx + 1
+    team_short = team.name.replace("班", "")[:2] if team else "X"
+    m = re.search(r"(ST\d+-EQ\d+-\d{3}|RA-[A-Z0-9]+-\d{3})", parent_src.lot_no or "")
+    short_ref = m.group(1) if m else (parent_src.lot_no or "")[-16:]
+    lot_no = f"{prefix}{seq:03d}-[{short_ref}]-{team_short}"
+    p = M.ProductionLot(lot_no=lot_no, station_id=st.id,
+                        equipment_id=body.equipment_id, team_id=body.team_id,
+                        material_id=body.material_id,
+                        parent_type="incoming" if isinstance(parent_src, M.IncomingLot) else "production",
+                        parent_lot_no=parent_src.lot_no,
+                        qty=body.qty, unit="kg", status=1,
+                        operator=u.username, remark=body.remark.strip())
+    db.add(p); db.commit()
+    audit(db, u.username, "create", f"prodlot:{lot_no}", f"完工登记 {st.name} {body.qty}kg")
+    db.commit()
+    return {"ok": True, "id": p.id, "lot_no": lot_no}
+
+
+@app.get("/api/production-lots/{pid}/test-form")
+def prod_test_form(pid: int, check_type: str = "ipqc", token: str = Header(""),
+                   db: Session = Depends(get_db)):
+    """检验模板：ipqc→工序标准；oqc→产出成品物料标准"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    p = db.get(M.ProductionLot, pid)
+    if not p:
+        raise HTTPException(404, "生产批不存在")
+    std = None
+    if check_type == "oqc":
+        if not p.material_id:
+            raise HTTPException(400, "该批未登记产出成品物料，无法做成品检验")
+        mat = db.get(M.Material, p.material_id)
+        if not mat or mat.material_type != "成品":
+            raise HTTPException(400, f"产出物料 {mat.name if mat else '?'} 不是成品，无需成品检验")
+        std = db.query(M.QcStandard).filter(
+            M.QcStandard.object_type == "material", M.QcStandard.object_id == p.material_id,
+            M.QcStandard.check_type == "oqc", M.QcStandard.status == 1).first()
+        if not std:
+            raise HTTPException(400, f"成品 {mat.name} 还没有成品检验标准，请先在标准库配置")
+    else:
+        std = db.query(M.QcStandard).filter(
+            M.QcStandard.object_type == "station", M.QcStandard.object_id == p.station_id,
+            M.QcStandard.check_type == "ipqc", M.QcStandard.status == 1).first()
+        if not std:
+            raise HTTPException(400, "该工序还没有过程检验标准，请先在标准库配置")
+    items = db.query(M.QcStandardItem).filter(
+        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1
+    ).order_by(M.QcStandardItem.seq).all()
+    return {"std_id": std.id, "std_no": std.std_no, "std_name": std.name,
+            "check_type": check_type,
+            "items": [{"indicator": it.indicator, "unit": it.unit,
+                       "min_val": it.min_val, "max_val": it.max_val,
+                       "method": it.method, "is_key": it.is_key} for it in items]}
+
+
+class ProdTestIn(BaseModel):
+    std_id: int
+    check_type: str = "ipqc"      # ipqc / oqc
+    items: list
+    customer_id: int | None = None  # oqc 时可选：按客户出 COA
+
+
+def _prod_ncr_no(db):
+    return _next_no(db, M.Ncr, "ncr_no", f"NCR-{datetime.now().year}-")
+
+
+@app.post("/api/production-lots/{pid}/test")
+def prod_test(pid: int, body: ProdTestIn, token: str = Header(""),
+              db: Session = Depends(get_db)):
+    """过程/成品检验提交：全合格 → 流转（末道成品批自动待成品检验/OQC 合格出 COA）；
+    有不合格 → 冻结 + NCR(prod)"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    _require_action(u, ["admin", "qm", "qc"])
+    p = db.get(M.ProductionLot, pid)
+    if not p:
+        raise HTTPException(404, "生产批不存在")
+    ctype = body.check_type
+    if ctype == "ipqc":
+        if p.status != 1:
+            raise HTTPException(400, f"该批状态为{PROD_STATUS.get(p.status)}，只有'待过程检验'可提交过程检验")
+    elif ctype == "oqc":
+        if p.status != 4:
+            raise HTTPException(400, f"该批状态为{PROD_STATUS.get(p.status)}，只有'待成品检验'可提交成品检验")
+        if not p.material_id:
+            raise HTTPException(400, "该批未登记产出物料")
+    else:
+        raise HTTPException(400, "check_type 须为 ipqc/oqc")
+    std = db.get(M.QcStandard, body.std_id)
+    if not std:
+        raise HTTPException(400, "标准不存在")
+    std_items = {it.indicator: it for it in db.query(M.QcStandardItem).filter(
+        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1).all()}
+    today = datetime.now().strftime("%Y%m%d")
+    test_no = _next_no(db, M.TestRecord, "test_no", f"T-{today}-")
+    tr = M.TestRecord(test_no=test_no, prod_id=p.id, std_id=std.id,
+                      check_type=ctype, result=0, tested_by=u.username)
+    db.add(tr); db.flush()
+    fail_parts, fail_n, judged_n = _judge_and_fill(db, tr, std_items, body.items)
+    if judged_n == 0:
+        db.delete(tr); db.commit()
+        raise HTTPException(400, "没有可判定的检验项（请按模板逐项录入实测值）")
+    ncr_no = None
+    if fail_n:
+        tr.result = 2
+        p.status = 3 if ctype == "ipqc" else 6
+        summary = "；".join(fail_parts[:8])
+        ncr_no = _prod_ncr_no(db)
+        db.add(M.Ncr(ncr_no=ncr_no, prod_id=p.id, test_id=tr.id, fail_summary=summary,
+                     status=0, created_by=u.username))
+        audit(db, u.username, "create", f"ncr:{ncr_no}", f"{COA_CHECK_TYPES.get(ctype)}不合格自动开单：{summary[:60]}")
+    else:
+        tr.result = 1
+        if ctype == "ipqc":
+            # 过程合格：末道产出成品 → 待成品检验；否则 → 过程合格可流入下工序
+            mat = db.get(M.Material, p.material_id) if p.material_id else None
+            if mat and mat.material_type == "成品":
+                p.status = 4
+            else:
+                p.status = 2
+            audit(db, u.username, "update", f"prodlot:{p.lot_no}", f"过程检验合格 {test_no}")
+        else:
+            p.status = 5   # 成品合格
+            _issue_coa(db, p, tr.id, body.customer_id, u.username)
+            audit(db, u.username, "update", f"prodlot:{p.lot_no}", f"成品检验合格出COA {test_no}")
+    p.updated_at = datetime.now()
+    db.commit()
+    return {"ok": True, "test_no": test_no, "result": tr.result,
+            "fail_summary": "；".join(fail_parts[:8]) if fail_n else "",
+            "ncr_no": ncr_no}
+
+
+def _issue_coa(db, prod_lot, test_id, customer_id, username):
+    """OQC 合格 → 生成 COA（明细快照 items_json，此后标准改动不影响历史报告）"""
+    items = db.query(M.TestItem).filter(M.TestItem.test_id == test_id) \
+        .order_by(M.TestItem.seq).all()
+    snap = [{"indicator": it.indicator, "actual": it.actual, "unit": it.unit,
+             "min_val": it.min_val, "max_val": it.max_val, "pass": it.pass_flag}
+            for it in items]
+    today = datetime.now().strftime("%Y%m%d")
+    coa_no = _next_no(db, M.Coa, "coa_no", f"COA-{today}-")
+    db.add(M.Coa(coa_no=coa_no, prod_id=prod_lot.id, customer_id=customer_id,
+                 test_id=test_id, items_json=json.dumps(snap, ensure_ascii=False),
+                 result=1, issued_by=username))
+    return coa_no
+
+
+@app.get("/api/coas")
+def coa_list(token: str = Header(""), db: Session = Depends(get_db)):
+    """成品报告列表（放行控制：只有成品合格批才出得了 COA——在库记录即已放行）"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    rows = db.query(M.Coa).order_by(M.Coa.id.desc()).limit(200).all()
+    out = []
+    for c in rows:
+        p = db.get(M.ProductionLot, c.prod_id)
+        mat = db.get(M.Material, p.material_id) if p and p.material_id else None
+        cust = db.get(M.Customer, c.customer_id) if c.customer_id else None
+        out.append({"id": c.id, "coa_no": c.coa_no,
+                    "prod_id": c.prod_id, "lot_no": p.lot_no if p else "",
+                    "material_name": mat.name if mat else "",
+                    "customer_name": cust.name if cust else "（通用）",
+                    "issued_by": c.issued_by,
+                    "created_at": c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else ""})
+    return out
+
+
+@app.get("/api/coas/{cid}")
+def coa_detail(cid: int, token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    c = db.get(M.Coa, cid)
+    if not c:
+        raise HTTPException(404, "COA 不存在")
+    p = db.get(M.ProductionLot, c.prod_id)
+    mat = db.get(M.Material, p.material_id) if p and p.material_id else None
+    cust = db.get(M.Customer, c.customer_id) if c.customer_id else None
+    try:
+        items = json.loads(c.items_json or "[]")
+    except Exception:
+        items = []
+    return {"coa_no": c.coa_no, "lot_no": p.lot_no if p else "",
+            "material_name": mat.name if mat else "",
+            "material_spec": mat.spec if mat else "",
+            "customer_name": cust.name if cust else "（通用）",
+            "qty": p.qty if p else 0, "unit": p.unit if p else "",
+            "issued_by": c.issued_by,
+            "created_at": c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+            "items": items}
+
+
+# 放行控制：成品可用列表（发货环节第5步将只允许引这些批）
+@app.get("/api/fg-available")
+def fg_available(token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    rows = db.query(M.ProductionLot).filter(M.ProductionLot.status == 5).all()
+    return [_prod_out(db, p) for p in rows]
+
 
 # ═══════════════════════ 权限矩阵（供账号页勾选）═══════════════════════
+
 @app.get("/api/admin/perm-matrix")
 def perm_matrix(token: str = Header(""), db: Session = Depends(get_db)):
     u = require_user(token, db)

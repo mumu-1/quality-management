@@ -101,7 +101,7 @@ urow2 = next(u for u in call("GET", "/api/admin/users", token=AT) if u["username
 check("传null→view_pages=null(回角色默认)", urow2["view_pages"] is None and urow2["manage_modules"] is None,
       f"view={urow2['view_pages']} manage={urow2['manage_modules']}")
 lg3 = call("POST", "/api/auth/login", {"username": UNAME, "password": "123456"})
-check("登录回到角色默认6页", keys(lg3) == sorted(["dashboard", "qcstandard", "incoming", "ncr", "material", "equipment"]), str(keys(lg3)))
+check("登录回到角色默认7页", keys(lg3) == sorted(["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "equipment"]), str(keys(lg3)))
 # 3d. 显式空数组 = 一个页面都不给看
 urow = next(u for u in call("GET", "/api/admin/users", token=AT) if u["username"] == UNAME)
 empty = call("PUT", f"/api/admin/users/{urow['id']}", {"view_pages": [], "manage_modules": []}, token=AT)

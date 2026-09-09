@@ -39,7 +39,7 @@ QCT = qc.get("token", "")
 
 print("══ 1. 标准列表与筛选 ══")
 lst = call("GET", "/api/qc-standards", token=AT)
-check("共 12 套演示标准", len(lst) == 12, f"实际 {len(lst)}")
+check("共 14 套演示标准", len(lst) == 14, f"实际 {len(lst)}")
 iqc = [s for s in lst if s["check_type"] == "iqc"]
 ipqc = [s for s in lst if s["check_type"] == "ipqc"]
 check("来料 7 套 / 过程 5 套", len(iqc) == 7 and len(ipqc) == 5)
@@ -51,7 +51,7 @@ f2 = call("GET", "/api/qc-standards?keyword=" + urllib.parse.quote("磷酸"), to
 check("关键字'磷酸'命中≥2", len(f2) >= 2, f"{len(f2)} 条")
 # 只读角色看不到管理入口（后端校验放行读取）
 ro = call("GET", "/api/qc-standards", token=QCT)
-check("检验员可读标准(只读角色)", isinstance(ro, list) and len(ro) == 12)
+check("检验员可读标准(只读角色)", isinstance(ro, list) and len(ro) == 14)
 
 print("══ 2. 新建标准 + 防重 ══")
 # qc 越权

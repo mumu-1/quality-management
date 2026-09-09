@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """第1步：建库 + 全套演示数据（物料用用户提供的真实清单）"""
-import hashlib, os, secrets, sys
+import hashlib, os, re, secrets, sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import Base, engine, SessionLocal, ensure_schema
 from models import (User, Material, Supplier, Customer, Workshop, Station,
                     Team, Equipment, QcStandard, QcStandardItem, UserStation,
-                    IncomingLot, Sample, TestRecord, TestItem, Ncr)
+                    IncomingLot, Sample, TestRecord, TestItem, Ncr,
+                    ProductionLot, Coa)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -246,6 +247,225 @@ def seed_incoming(db):
     print(f"✔ 来料检验演示数据: 5 批来料（放行1/待取样1/待检验1/让步1/冻结待处理1）+ 检验单3 + NCR2")
 
 
+
+def seed_production(db):
+    """第4步演示：成品OQC标准 + 生产主链（原料→溶解→合成→压滤→干燥→包装成品）+ COA
+    幂等：production_lot 已有数据则跳过"""
+    db.flush()
+    if db.query(ProductionLot).count() > 0:
+        return
+    # 幂等补成品物料（老库升级时 FG 可能不存在）
+    if not db.query(Material).filter(Material.code == "FG-001").first():
+        db.add(Material(code="FG-001", name="电池级磷酸铁", material_type="成品",
+                        spec="FePO4 电池级 D50 1~3um", unit="t"))
+    if not db.query(Material).filter(Material.code == "FG-002").first():
+        db.add(Material(code="FG-002", name="工业级磷酸铁", material_type="成品",
+                        spec="FePO4 工业级", unit="t"))
+    db.flush()
+    mats = {m.code: m for m in db.query(Material).all()}
+    sts = {st.code: st for st in db.query(Station).all()}
+    eqs = {e.code: e for e in db.query(Equipment).all()}
+    teams = {t.name: t for t in db.query(Team).all()}
+    now = datetime.now()
+    today = now.strftime("%Y%m%d")
+    tseq = [100]   # 检验单号自增种子（避开 seed_incoming 已用的 001-00x）
+
+    def get_std(otype, oid, ctype, name):
+        std = db.query(QcStandard).filter(QcStandard.object_type == otype,
+                                          QcStandard.object_id == oid,
+                                          QcStandard.check_type == ctype).first()
+        if std:
+            return std
+        db.flush()   # 关键：让本次会话已 add 的标准可见，避免连续新建取到同一号
+        mx = db.query(QcStandard).order_by(QcStandard.id.desc()).first()
+        no = f"STD-{(int(mx.std_no.split('-')[1]) + 1) if mx else 1:03d}"
+        std = QcStandard(std_no=no, name=name, object_type=otype, object_id=oid,
+                         check_type=ctype, sample_qty=1, status=1, version=1,
+                         updated_by="admin", created_at=now, updated_at=now)
+        db.add(std)
+        return std
+
+    def mk_items(std, rows):
+        db.flush()
+        for j, (ind, unit, lo, hi, method, key) in enumerate(rows, start=1):
+            db.add(QcStandardItem(standard_id=std.id, seq=j, indicator=ind, unit=unit,
+                                  min_val=lo, max_val=hi, method=method, is_key=key))
+
+    # ── 成品 OQC 标准（FG-001 电池级 / FG-002 工业级）──
+    fg1 = mats.get("FG-001")
+    fg2 = mats.get("FG-002")
+    oqc1 = get_std("material", fg1.id, "oqc", "电池级磷酸铁-成品检验标准") if fg1 else None
+    oqc2 = get_std("material", fg2.id, "oqc", "工业级磷酸铁-成品检验标准") if fg2 else None
+    # 电池级标准项（Fe/P 摩尔比 0.96~1.00 关键、Fe≥29、P 16~17、水分≤0.5、D50 1~3μm、磁性异物≤100ppb、外观）
+    if oqc1 and db.query(QcStandardItem).filter(QcStandardItem.standard_id == oqc1.id).count() == 0:
+        mk_items(oqc1, [
+            ("铁含量(Fe)", "%", 29.0, None, "ICP-OES", 1),
+            ("磷含量(P)", "%", 16.0, 17.0, "ICP-OES", 1),
+            ("Fe/P摩尔比", "", 0.96, 1.00, "计算", 1),
+            ("水分", "%", None, 0.5, "卡氏水分仪", 0),
+            ("粒径D50", "um", 1.0, 3.0, "激光粒度仪", 1),
+            ("磁性异物", "ppb", None, 100, "磁吸法", 1),
+            ("外观", "", None, None, "目测：白色至浅黄粉末无结块", 0),
+        ])
+    if oqc2 and db.query(QcStandardItem).filter(QcStandardItem.standard_id == oqc2.id).count() == 0:
+        mk_items(oqc2, [
+            ("铁含量(Fe)", "%", 28.0, None, "ICP-OES", 1),
+            ("磷含量(P)", "%", 15.5, 17.5, "ICP-OES", 1),
+            ("Fe/P摩尔比", "", 0.94, 1.02, "计算", 1),
+            ("水分", "%", None, 1.0, "卡氏水分仪", 0),
+            ("粒径D50", "um", 1.0, 5.0, "激光粒度仪", 0),
+            ("外观", "", None, None, "目测：无结块无异物", 0),
+        ])
+    db.flush()
+
+    # ── 生产主链演示（父批约束：上工序合格批）──
+    # 父原料 = seed_incoming 的批次1 七水硫酸亚铁（status=2 合格放行）
+    parent_in = db.query(IncomingLot).filter(IncomingLot.status == 2).first()
+    if not parent_in:
+        db.commit()
+        return
+
+    def std_items_map(std):
+        return {it.indicator: it for it in db.query(QcStandardItem)
+                .filter(QcStandardItem.standard_id == std.id, QcStandardItem.enabled == 1).all()}
+
+    def good_actual(it):
+        if it.min_val is not None and it.max_val is not None:
+            return str(round((it.min_val + it.max_val) / 2, 2))
+        if it.min_val is not None:
+            return str(it.min_val + (it.max_val - it.min_val if it.max_val is not None else 0.05))
+        if it.max_val is not None:
+            return str(round(it.max_val * 0.5, 2))
+        return "合格"
+
+    def bad_actual(it):
+        if it.min_val is not None and it.max_val is not None:
+            return str(it.min_val - 0.05)
+        if it.min_val is not None:
+            return str(round(it.min_val - 0.05, 2))
+        if it.max_val is not None:
+            return str(round(it.max_val + 0.05, 2))
+        return ""
+
+    def make_test(prod_id, std, tested_by, fail=False):
+        """生成检验单+明细；fail=True 时首项故意不合格"""
+        tseq[0] += 1
+        tr = TestRecord(test_no=f"T-{today}-{tseq[0]:03d}", prod_id=prod_id, std_id=std.id,
+                        check_type=std.check_type, result=1 if not fail else 2, tested_by=tested_by)
+        db.add(tr); db.flush()
+        for i, it in enumerate(std_items_map(std).values(), start=1):
+            bad = fail and i == 1
+            actual = bad_actual(it) if bad else good_actual(it)
+            db.add(TestItem(test_id=tr.id, seq=i, indicator=it.indicator, unit=it.unit,
+                            min_val=it.min_val, max_val=it.max_val, method=it.method,
+                            is_key=it.is_key, actual=actual,
+                            pass_flag=0 if bad else 1))
+        db.flush()   # 让明细落库，调用方可立即查询
+        return tr
+
+    # 批号格式：日期-ST工序-EQ设备-序号-[父引用短码]-班组（完整父批号单独存 parent_lot_no 字段）
+    def _short_ref(parent_no):
+        m = re.search(r"(ST\d+-EQ\d+-\d{3}|RA-[A-Z0-9]+-\d{3})", parent_no or "")
+        return m.group(1) if m else (parent_no or "")[-16:]
+
+    def lot_no(st_code, eq_code, seq, parent_no, team):
+        return f"{today}-ST{st_code[-2:]}-{eq_code}-{seq:03d}-[{_short_ref(parent_no)}]-{team}"
+
+    seq_ctr = {}
+
+    def next_seq(key):
+        seq_ctr[key] = seq_ctr.get(key, 0) + 1
+        return seq_ctr[key]
+
+    # P1: 溶解配液 ST01（父=原料批）
+    p1 = ProductionLot(lot_no=lot_no("ST01", "EQ001", next_seq("ST01"), parent_in.lot_no, "甲"),
+                       station_id=sts["ST01"].id, equipment_id=eqs["EQ-001"].id,
+                       team_id=teams["甲班"].id, material_id=mats["RAW-001"].id,
+                       parent_type="incoming", parent_lot_no=parent_in.lot_no,
+                       qty=30.0, unit="t", status=2, operator="prodlead2",
+                       created_at=now, updated_at=now)
+    db.add(p1); db.flush()
+    ipqc1 = get_std("station", sts["ST01"].id, "ipqc", "溶解配液-过程检验标准")
+    make_test(p1.id, ipqc1, "qc")
+
+    # P2: 合成反应 ST03（父=P1）
+    p2 = ProductionLot(lot_no=lot_no("ST03", "EQ004", next_seq("ST03"), p1.lot_no, "甲"),
+                       station_id=sts["ST03"].id, equipment_id=eqs["EQ-004"].id,
+                       team_id=teams["甲班"].id,
+                       parent_type="production", parent_lot_no=p1.lot_no,
+                       qty=28.0, unit="t", status=2, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p2); db.flush()
+    ipqc3 = get_std("station", sts["ST03"].id, "ipqc", "合成反应-过程检验标准")
+    make_test(p2.id, ipqc3, "qc")
+
+    # P3: 压滤洗涤 ST05（父=P2）
+    p3 = ProductionLot(lot_no=lot_no("ST05", "EQ007", next_seq("ST05"), p2.lot_no, "乙"),
+                       station_id=sts["ST05"].id, equipment_id=eqs["EQ-007"].id,
+                       team_id=teams["乙班"].id,
+                       parent_type="production", parent_lot_no=p2.lot_no,
+                       qty=26.0, unit="t", status=2, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p3); db.flush()
+    ipqc5 = get_std("station", sts["ST05"].id, "ipqc", "压滤洗涤-过程检验标准")
+    make_test(p3.id, ipqc5, "qc")
+
+    # P4: 干燥脱水 ST06（父=P3）
+    p4 = ProductionLot(lot_no=lot_no("ST06", "EQ009", next_seq("ST06"), p3.lot_no, "乙"),
+                       station_id=sts["ST06"].id, equipment_id=eqs["EQ-009"].id,
+                       team_id=teams["乙班"].id,
+                       parent_type="production", parent_lot_no=p3.lot_no,
+                       qty=25.0, unit="t", status=2, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p4); db.flush()
+    ipqc6 = get_std("station", sts["ST06"].id, "ipqc", "干燥脱水-过程检验标准")
+    make_test(p4.id, ipqc6, "qc2")
+
+    # P5: 除磁包装 ST08（父=P4，产出成品 FG-001）→ IPQC 合格 + OQC 合格 + COA
+    p5 = ProductionLot(lot_no=lot_no("ST08", "EQ013", next_seq("ST08"), p4.lot_no, "丙"),
+                       station_id=sts["ST08"].id, equipment_id=eqs["EQ-013"].id,
+                       team_id=teams["丙班"].id, material_id=mats["FG-001"].id,
+                       parent_type="production", parent_lot_no=p4.lot_no,
+                       qty=24.0, unit="t", status=5, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p5); db.flush()
+    ipqc8 = get_std("station", sts["ST08"].id, "ipqc", "除磁包装-过程检验标准")
+    tr_ipqc8 = make_test(p5.id, ipqc8, "qc2")
+    tr_oqc = make_test(p5.id, oqc1, "qc2")
+    db.add(Coa(coa_no=f"COA-{today}-{next_seq('COA'):03d}", prod_id=p5.id,
+               customer_id=db.query(Customer).filter(Customer.code == "CUS-001").first().id,
+               test_id=tr_oqc.id, items_json="[]", result=1, issued_by="qm",
+               created_at=now))
+
+    # P6: ST05 再来一批（父=P2）→ 故意 IPQC 不合格 → 冻结 + NCR(prod)
+    p6 = ProductionLot(lot_no=lot_no("ST05", "EQ008", next_seq("ST05"), p2.lot_no, "乙"),
+                       station_id=sts["ST05"].id, equipment_id=eqs["EQ-008"].id,
+                       team_id=teams["乙班"].id,
+                       parent_type="production", parent_lot_no=p2.lot_no,
+                       qty=12.0, unit="t", status=3, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p6); db.flush()
+    tr6 = make_test(p6.id, ipqc5, "qc", fail=True)
+    # 取第一个不合格项的说明
+    fail_it = db.query(TestItem).filter(TestItem.test_id == tr6.id, TestItem.pass_flag == 0).first()
+    db.add(Ncr(ncr_no=f"NCR-{now.year}-{now.month:02d}003", prod_id=p6.id, test_id=tr6.id,
+               fail_summary=f"{fail_it.indicator} 实测{fail_it.actual}"
+                            f"（标准{'≥' + str(fail_it.min_val) if fail_it.min_val is not None else ''}"
+                            f"{'≤' + str(fail_it.max_val) if fail_it.max_val is not None else ''}）",
+               status=0, created_by="qc", created_at=now))
+
+    # P7: ST03 再来一批（父=P1）→ 待过程检验（演示"去检验"入口）
+    p7 = ProductionLot(lot_no=lot_no("ST03", "EQ005", next_seq("ST03"), p1.lot_no, "丙"),
+                       station_id=sts["ST03"].id, equipment_id=eqs["EQ-005"].id,
+                       team_id=teams["丙班"].id,
+                       parent_type="production", parent_lot_no=p1.lot_no,
+                       qty=10.0, unit="t", status=1, operator="prodlead",
+                       created_at=now, updated_at=now)
+    db.add(p7)
+    db.commit()
+    print(f"✔ 生产批次演示数据: 主链6批(原料→包装成品)+OQC标准2套+COA1张+待检1批+不合格冻结1批(含NCR)")
+
+
 def seed():
     ensure_schema()
     db = SessionLocal()
@@ -255,6 +475,7 @@ def seed():
             seed_standards(db)
             seed_user_stations(db)
             seed_incoming(db)
+            seed_production(db)
             print("DB 已有基础数据，完成增量补种")
             return
 
@@ -268,19 +489,20 @@ def seed():
         ]
         db.add_all(ws); db.flush()
 
-        # ═══ 工序（挂在车间下；next_station 串顺序，供后续追溯）═══
+        # ═══ 工序（挂在车间下；next_station 串主链顺序，供父批约束/追溯用）═══
         st_defs = [
-            # (code,name,ws序号,next)
-            ("ST01", "溶解配液", 0, 2), ("ST02", "过滤净化", 0, None),
-            ("ST03", "合成反应", 1, 4), ("ST04", "氧化陈化", 1, None),
-            ("ST05", "压滤洗涤", 2, 6), ("ST06", "干燥脱水", 2, None),
-            ("ST07", "粉碎筛分", 3, 8), ("ST08", "除磁包装", 3, None),
-            ("ST09", "水处理", 4, None), ("ST10", "供汽供电", 4, None),
+            # (code,name,ws序号)
+            ("ST01", "溶解配液", 0), ("ST02", "过滤净化", 0),
+            ("ST03", "合成反应", 1), ("ST04", "氧化陈化", 1),
+            ("ST05", "压滤洗涤", 2), ("ST06", "干燥脱水", 2),
+            ("ST07", "粉碎筛分", 3), ("ST08", "除磁包装", 3),
+            ("ST09", "水处理", 4), ("ST10", "供汽供电", 4),
         ]
-        # 上一步: 溶解→过滤→合成→氧化→压滤→干燥→粉碎→包装
-        link = {1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8}
+        # 主工艺链（第4步用）：溶解(ST01)→合成(ST03)→压滤(ST05)→干燥(ST06)→包装成品(ST08)
+        # 过滤/氧化/粉碎 为可选辅助工序，不强制串主链
+        link = {1: 3, 3: 5, 5: 6, 6: 8}
         stations = []
-        for code, name, wix, _nxt in st_defs:
+        for code, name, wix in st_defs:
             stations.append(Station(code=code, name=name, workshop_id=ws[wix].id, seq=wix * 10))
         for i, s in enumerate(stations, start=1):
             s.next_station_id = link.get(i)
@@ -323,6 +545,9 @@ def seed():
             ("AUX-001", "木质纤维素", "辅料", "工业级", "t"),
             ("AUX-002", "硅藻土", "辅料", "工业级 食品级过滤助剂", "t"),
             ("AUX-003", "硫酸", "辅料", "H2SO4 ≥98%", "t"),
+            # 第4步新增：成品（末道除磁包装产出）
+            ("FG-001", "电池级磷酸铁", "成品", "FePO4 电池级 D50 1~3um", "t"),
+            ("FG-002", "工业级磷酸铁", "成品", "FePO4 工业级", "t"),
         ]
         for code, name, mtype, spec, unit in mat_defs:
             db.add(Material(code=code, name=name, material_type=mtype, spec=spec, unit=unit))
@@ -372,6 +597,8 @@ def seed():
         seed_standards(db)
         # ═══ 第3步：来料检验闭环演示数据 ═══
         seed_incoming(db)
+        # ═══ 第4步：生产批次/成品检验演示数据 ═══
+        seed_production(db)
     finally:
         db.close()
 
