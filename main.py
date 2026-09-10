@@ -42,6 +42,7 @@ PAGES = {
     "ncr":         ("⚠️ 不合格处理", "质量管控", "ncr"),
     "trace":       ("🔍 批次追溯", "质量管控", "trace"),
     "report":      ("📈 统计报表", "质量管控", "report"),
+    "complaint":   ("📣 客诉管理", "质量管控", "complaint"),
     "material":    ("📦 物料管理", "基础资料", "material"),
     "supplier":    ("🚚 供应商", "基础资料", "supplier"),
     "customer":    ("🤝 客户", "基础资料", "customer"),
@@ -53,8 +54,10 @@ PAGES = {
     "position":    ("👔 职务管理", "基础资料", "position"),
     "user":        ("🛠️ 账号管理", "系统管理", "user"),
     "duty":        ("🔐 岗位职责", "系统管理", "duty"),
+    "audit":       ("📜 操作日志", "系统管理", "audit"),
 }
-_QC_CORE = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
+_QC_CORE = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr",
+            "trace", "report", "complaint"]
 _BASEINFO = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
              "department", "position"]
 # 角色 → 可访问页面
@@ -62,19 +65,21 @@ ROLE_PAGES = {
     "admin":     list(PAGES.keys()),
     "boss":      _QC_CORE + _BASEINFO,
     "qm":        _QC_CORE + _BASEINFO,
-    "qc":        ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "equipment"],
+    "qc":        ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace",
+                  "report", "complaint", "material", "equipment"],
     "sampler":   ["dashboard", "incoming", "material"],
     "prodlead":  ["dashboard", "screen", "prodlot", "trace", "qcstandard", "workshop", "station", "equipment", "team"],
-    "buyer":     ["dashboard", "incoming", "ncr", "trace", "material", "supplier", "customer"],
+    "buyer":     ["dashboard", "incoming", "ncr", "trace", "complaint", "material", "supplier", "customer"],
     "store":     ["dashboard", "incoming", "ncr", "trace", "material", "customer", "workshop"],
     "worker":    ["dashboard", "prodlot"],
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
     "admin":   ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
-                "department", "position", "user", "duty", "qcstandard", "incoming", "ncr", "prodlot"],
+                "department", "position", "user", "duty", "audit", "qcstandard", "incoming", "ncr",
+                "prodlot", "complaint"],
     "qm":      ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
-                "department", "position", "qcstandard", "incoming", "ncr", "prodlot"],
+                "department", "position", "qcstandard", "incoming", "ncr", "prodlot", "complaint"],
     "prodlead": ["prodlot"],
     "buyer":   ["supplier", "incoming", "ncr"],
 }
@@ -2260,6 +2265,13 @@ def board_data(days: int = 30, token: str = Header(""), db: Session = Depends(ge
         "ncr_trend": ncr_trend,
         "fail_pareto": fail_pareto,
         "spc_alarm": {"count": len(alarm_items), "items": alarm_items[:6]},
+        "complaint": {
+            "total": db.query(M.Complaint).filter(M.Complaint.created_at >= since).count(),
+            "open": db.query(M.Complaint).filter(
+                M.Complaint.status.in_([0, 1]), M.Complaint.created_at >= since).count(),
+            "closing": db.query(M.Complaint).filter(
+                M.Complaint.status == 3, M.Complaint.created_at >= since).count(),
+        },
     }
 
 
@@ -2377,6 +2389,188 @@ def duty_delete(tid: int, token: str = Header(""), db: Session = Depends(get_db)
     audit(db, u.username, "delete", f"duty:{tid}", "停用职责模板")
     db.commit()
     return {"ok": True}
+
+
+# ═══════════════════════ 客诉管理（第三批）═══════════════════════
+COMPLAINT_STATUS = {0: "待受理", 1: "调查中", 2: "已回复", 3: "已关闭"}
+CLAIM_TYPES = ["质量异议", "包装标识", "交期", "其他"]
+SEVERITY_NAMES = {1: "一般", 2: "严重", 3: "重大"}
+
+
+def _complaint_out(db, c):
+    cu = db.get(M.Customer, c.customer_id) if c.customer_id else None
+    return {"id": c.id, "complaint_no": c.complaint_no,
+            "customer_id": c.customer_id, "customer_name": cu.name if cu else "",
+            "lot_no": c.lot_no, "coa_no": c.coa_no,
+            "claim_type": c.claim_type, "severity": c.severity,
+            "severity_name": SEVERITY_NAMES.get(c.severity, "?"),
+            "title": c.title, "content": c.content,
+            "root_cause": c.root_cause, "action": c.action, "reply": c.reply,
+            "status": c.status, "status_name": COMPLAINT_STATUS.get(c.status, "?"),
+            "created_by": c.created_by,
+            "handled_by": c.handled_by,
+            "handled_at": c.handled_at.strftime("%Y-%m-%d %H:%M") if c.handled_at else "",
+            "closed_by": c.closed_by,
+            "closed_at": c.closed_at.strftime("%Y-%m-%d %H:%M") if c.closed_at else "",
+            "created_at": c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "",
+            "updated_at": c.updated_at.strftime("%Y-%m-%d %H:%M") if c.updated_at else ""}
+
+
+@app.get("/api/complaints")
+def complaint_list(status: str = "", keyword: str = "", token: str = Header(""),
+                   db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "complaint")
+    q = db.query(M.Complaint)
+    if status != "" and status is not None:
+        q = q.filter(M.Complaint.status == int(status))
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(or_(M.Complaint.complaint_no.like(like), M.Complaint.title.like(like),
+                         M.Complaint.lot_no.like(like), M.Complaint.content.like(like)))
+    rows = q.order_by(M.Complaint.id.desc()).limit(200).all()
+    out = [_complaint_out(db, c) for c in rows]
+    stat = {k: len([c for c in rows if c.status == k]) for k in COMPLAINT_STATUS}
+    return {"rows": out, "stat": stat, "total": len(rows),
+            "open": len([c for c in rows if c.status in (0, 1)])}
+
+
+class ComplaintIn(BaseModel):
+    customer_id: int | None = None
+    lot_no: str = ""
+    coa_no: str = ""
+    claim_type: str = "质量异议"
+    severity: int = 1
+    title: str
+    content: str = ""
+
+
+@app.post("/api/complaints")
+def complaint_create(body: ComplaintIn, token: str = Header(""), db: Session = Depends(get_db)):
+    """客诉登记：质量部/采购/管理员都可登记"""
+    u = require_user(token, db)
+    require_page(u, "complaint")
+    _require_action(u, ["admin", "qm", "qc", "buyer"])
+    if not body.title.strip():
+        raise HTTPException(400, "请填写投诉主题")
+    if body.customer_id and not db.get(M.Customer, body.customer_id):
+        raise HTTPException(400, "客户不存在")
+    if body.severity not in (1, 2, 3):
+        raise HTTPException(400, "严重程度只能是 1一般/2严重/3重大")
+    if body.claim_type not in CLAIM_TYPES:
+        raise HTTPException(400, "投诉类型不合法")
+    no = _next_no(db, M.Complaint, "complaint_no", f"CS-{datetime.now().year}-")
+    c = M.Complaint(complaint_no=no, customer_id=body.customer_id,
+                    lot_no=body.lot_no.strip(), coa_no=body.coa_no.strip(),
+                    claim_type=body.claim_type, severity=body.severity,
+                    title=body.title.strip(), content=body.content.strip(),
+                    status=0, created_by=u.username)
+    db.add(c)
+    db.commit()
+    audit(db, u.username, "create", f"complaint:{no}", f"客诉登记：{body.title[:40]}")
+    db.commit()
+    return {"ok": True, "id": c.id, "complaint_no": no}
+
+
+class ComplaintEditIn(BaseModel):
+    claim_type: str | None = None
+    severity: int | None = None
+    title: str | None = None
+    content: str | None = None
+    lot_no: str | None = None
+    coa_no: str | None = None
+    customer_id: int | None = None
+    root_cause: str | None = None
+    action: str | None = None
+    reply: str | None = None
+    status: int | None = None
+
+
+@app.put("/api/complaints/{cid}")
+def complaint_update(cid: int, body: ComplaintEditIn, token: str = Header(""),
+                     db: Session = Depends(get_db)):
+    """调查/回复/关闭：质量经理与管理员可处置；登记人可补充内容"""
+    u = require_user(token, db)
+    require_page(u, "complaint")
+    c = db.get(M.Complaint, cid)
+    if not c:
+        raise HTTPException(404, "客诉单不存在")
+    if body.status is not None and body.status not in (0, 1, 2, 3):
+        raise HTTPException(400, "状态不合法")
+    # 处置类字段（原因/措施/回复/状态推进）需要质量经理或管理员
+    disposing = any([
+        body.root_cause is not None, body.action is not None, body.reply is not None,
+        body.status is not None,
+    ])
+    if disposing:
+        _require_action(u, ["admin", "qm"])
+    else:
+        _require_action(u, ["admin", "qm", "qc", "buyer"])
+    if body.claim_type is not None:
+        if body.claim_type not in CLAIM_TYPES:
+            raise HTTPException(400, "投诉类型不合法")
+        c.claim_type = body.claim_type
+    if body.severity is not None:
+        if body.severity not in (1, 2, 3):
+            raise HTTPException(400, "严重程度不合法")
+        c.severity = body.severity
+    for f in ("title", "content", "lot_no", "coa_no"):
+        v = getattr(body, f)
+        if v is not None:
+            setattr(c, f, v.strip())
+    if body.customer_id is not None:
+        c.customer_id = body.customer_id
+    if body.root_cause is not None:
+        c.root_cause = body.root_cause.strip()
+    if body.action is not None:
+        c.action = body.action.strip()
+    if body.reply is not None:
+        c.reply = body.reply.strip()
+    if body.status is not None:
+        old = c.status
+        c.status = body.status
+        c.handled_by = u.username
+        c.handled_at = datetime.now()
+        if body.status == 3:
+            c.closed_by = u.username
+            c.closed_at = datetime.now()
+            if not c.reply:
+                raise HTTPException(400, "关闭客诉前请先填写对客户的回复内容")
+        # 关闭前必须有原因分析与措施（8D 式闭环）
+        if body.status == 3 and not (c.root_cause and c.action):
+            raise HTTPException(400, "关闭前请先填写「原因分析」与「纠正措施」")
+        audit(db, u.username, "update", f"complaint:{c.complaint_no}",
+              f"状态 {COMPLAINT_STATUS.get(old)} → {COMPLAINT_STATUS.get(body.status)}")
+    c.updated_at = datetime.now()
+    db.commit()
+    return {"ok": True, "status": c.status}
+
+
+# ═══════════════════════ 操作日志（第三批）═══════════════════════
+@app.get("/api/audit-logs")
+def audit_logs(username: str = "", action: str = "", keyword: str = "", days: int = 30,
+               limit: int = 300, token: str = Header(""), db: Session = Depends(get_db)):
+    """操作日志：谁在什么时候改了什么（默认近 30 天，仅管理员可见）"""
+    u = require_user(token, db)
+    require_page(u, "audit")
+    days = max(1, min(int(days), 365))
+    since = datetime.now() - timedelta(days=days)
+    q = db.query(M.AuditLog).filter(M.AuditLog.created_at >= since)
+    if username:
+        q = q.filter(M.AuditLog.username == username)
+    if action:
+        q = q.filter(M.AuditLog.action == action)
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(or_(M.AuditLog.target.like(like), M.AuditLog.detail.like(like)))
+    rows = q.order_by(M.AuditLog.id.desc()).limit(max(1, min(limit, 1000))).all()
+    actions = [r[0] for r in db.query(M.AuditLog.action).distinct().all() if r[0]]
+    users = [r[0] for r in db.query(M.AuditLog.username).distinct().all() if r[0]]
+    return {"rows": [{"id": r.id, "username": r.username, "action": r.action,
+                      "target": r.target, "detail": r.detail,
+                      "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""}
+                     for r in rows],
+            "actions": sorted(actions), "users": sorted(users), "days": days}
 
 
 # ═══════════════════════ 权限矩阵（供账号页勾选）═══════════════════════

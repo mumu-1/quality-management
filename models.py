@@ -66,6 +66,34 @@ class DutyTemplate(Base):
     updated_at = Column(DateTime, default=datetime.now)
 
 
+class Complaint(Base):
+    """客诉单（第三批）：客户投诉登记 → 关联批次/COA → 内部调查 → 回复 → 关闭
+    status: 0待受理 1调查中 2已回复 3已关闭
+    severity: 1一般 2严重 3重大（客户停产/退货/索赔级）"""
+    __tablename__ = "complaint"
+    id = Column(Integer, primary_key=True)
+    complaint_no = Column(String(60), unique=True, nullable=False)   # CS-YYYY-NNN
+    customer_id = Column(Integer, ForeignKey("customer.id"), nullable=True, index=True)
+    lot_no = Column(String(120), default="")        # 关联成品批号（可留空，后补）
+    coa_no = Column(String(60), default="")
+    claim_type = Column(String(30), default="质量异议")   # 质量异议/包装标识/交期/其他
+    severity = Column(Integer, default=1)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, default="")              # 客户反映的问题
+    root_cause = Column(Text, default="")           # 原因分析
+    action = Column(Text, default="")               # 纠正/预防措施
+    reply = Column(Text, default="")                # 回复客户内容
+    status = Column(Integer, default=0)
+    created_by = Column(String(50), default="")
+    handled_by = Column(String(50), default="")
+    handled_at = Column(DateTime, nullable=True)
+    closed_by = Column(String(50), default="")
+    closed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now)
+    customer = relationship("Customer")
+
+
 class UserStation(Base):
     """用户↔工序 多对多：一人可负责多道工序（质检员管多工序）"""
     __tablename__ = "user_station"

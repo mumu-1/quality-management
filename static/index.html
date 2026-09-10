@@ -334,6 +334,8 @@ function openPage(key){
     department:()=>renderEntityPage('department'),
     position:()=>renderEntityPage('position'),
     duty:()=>renderDutyPage(),
+    complaint:()=>renderComplaintPage(),
+    audit:()=>renderAuditPage(),
     equipment:()=>renderEquipmentPage(),
     user:()=>renderUserPage(),
   };
@@ -2000,6 +2002,8 @@ async function loadBoard(){
         [(k.iqc.rate==null?'—':k.iqc.rate+'%'),(k.ipqc.rate==null?'—':k.ipqc.rate+'%'),(k.oqc.rate==null?'—':k.oqc.rate+'%')].join(' / '),'#cfe3f7')+'</div>'
     +'<div class="bd-c4">'+card('不合格单 NCR',k.ncr+' 单 / 待处理 '+k.ncr_open,k.ncr_open?'#ffab91':'#69f0ae')+'</div>'
     +'<div class="bd-c4">'+card('成品交付',k.coa+' 份 COA · 合格批 '+k.fg_ok,k.frozen?'#ffab91':'#69f0ae')+'</div>'
+    +'<div class="bd-c4">'+card('客户投诉',(d.complaint?d.complaint.total:0)+' 件 · 未闭环 '+(d.complaint?d.complaint.open:0),
+        (d.complaint&&d.complaint.open)?'#ffab91':'#69f0ae')+'</div>'
     // 供应商质量排名
     +'<div class="bd-card bd-c6"><div class="bd-ph">🏆 供应商来料合格率排名（近 '+d.days+' 天）</div>'
       +(d.supplier_rates.length?d.supplier_rates.map(x=>bar(x.supplier,x.rate,x.lots+' 批')).join('')
@@ -2159,6 +2163,191 @@ async function dutyDel(tid,name){
   try{await api('/api/duty-templates/'+tid,{method:'DELETE'});toast('✔ 已停用');
     DUTY=await api('/api/duty-matrix');window.DUTY=DUTY;renderDutyRows()}
   catch(e){toast('✘ '+e.message)}
+}
+
+
+/* ═══════════ 客诉管理（第三批）═══════════ */
+const CP_ST={0:'待受理',1:'调查中',2:'已回复',3:'已关闭'};
+const CP_TAG={0:'warn',1:'blue',2:'green',3:'gray'};
+const CP_TYPES=['质量异议','包装标识','交期','其他'];
+const CP_SEV={1:'一般',2:'严重',3:'重大'};
+async function renderComplaintPage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='📣 客诉管理';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='客户投诉登记 → 关联批次/COA → 内部调查（可一键查该批追溯）→ 回复客户 → 关闭。关闭前必须填原因分析与纠正措施（8D 式闭环）。';
+  c.appendChild(ttl);
+  if(['admin','qm','qc','buyer'].includes(ME.role)){
+    const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
+    btn.textContent='+ 登记客诉';btn.onclick=()=>showComplaintForm();
+    ttl.parentNode.insertBefore(btn,ttl.nextSibling);
+  }else{
+    const tag=document.createElement('span');tag.className='tag tag-gray';tag.style.cssText='float:right;margin-top:6px';tag.textContent='只读';
+    ttl.parentNode.insertBefore(tag,ttl.nextSibling);
+  }
+  c.appendChild(desc);
+  const bar=document.createElement('div');bar.className='panel';
+  bar.innerHTML='<div class="searchbar">'
+    +'<select id="cp-st" style="min-width:120px" onchange="loadComplaints()"><option value="">全部状态</option>'
+    +Object.keys(CP_ST).map(k=>'<option value="'+k+'">'+CP_ST[k]+'</option>').join('')+'</select>'
+    +'<input id="cp-kw" placeholder="搜客诉号/主题/批号/内容" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadComplaints()">'
+    +'<button class="btn btn-o" onclick="loadComplaints()">🔍 查询</button></div>';
+  c.appendChild(bar);
+  const addbox=document.createElement('div');addbox.className='panel';addbox.id='addbox-cp';addbox.style.display='none';
+  c.appendChild(addbox);
+  const stat=document.createElement('div');stat.id='cp-stat';stat.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px';
+  c.appendChild(stat);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>客诉号</th><th>客户</th><th>关联批号/COA</th><th>类型</th><th>严重</th><th>主题</th><th>状态</th><th>登记</th><th>操作</th></tr></thead><tbody id="tbody-cp"></tbody></table></div>';
+  c.appendChild(tbl);
+  loadComplaints();
+}
+async function loadComplaints(){
+  const st=document.getElementById('cp-st')?document.getElementById('cp-st').value:'';
+  const kw=document.getElementById('cp-kw')?document.getElementById('cp-kw').value:'';
+  const d=await api('/api/complaints?'+qs({status:st,keyword:kw}));
+  const sb=document.getElementById('cp-stat');
+  if(sb)sb.innerHTML=Object.keys(CP_ST).map(k=>'<div class="stat-card" style="flex:1;min-width:120px"><div class="lab">'+CP_ST[k]+'</div><div class="val blue">'+(d.stat[k]||0)+'</div></div>').join('')
+    +'<div class="stat-card" style="flex:1;min-width:120px"><div class="lab">未闭环</div><div class="val" style="color:'+(d.open?'var(--bad)':'var(--ok)')+'">'+d.open+'</div></div>';
+  const tb=document.getElementById('tbody-cp');
+  if(!d.rows.length){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-sub);padding:26px">暂无客诉记录</td></tr>';return}
+  const canDeal=['admin','qm'].includes(ME.role);
+  tb.innerHTML=d.rows.map(r=>{
+    const sevTag=r.severity>=3?'<span class="tag tag-red">'+CP_SEV[r.severity]+'</span>':(r.severity===2?'<span class="tag tag-warn">严重</span>':'<span class="tag tag-gray">一般</span>');
+    return '<tr><td><b>'+esc(r.complaint_no)+'</b></td>'
+      +'<td style="font-size:12.5px">'+esc(r.customer_name||'—')+'</td>'
+      +'<td style="font-size:11.5px">'+(r.lot_no?'<span class="tag tag-blue">'+esc(r.lot_no)+'</span>':'<span class="tag tag-gray">未关联</span>')
+      +(r.coa_no?'<div style="color:var(--text-sub)">'+esc(r.coa_no)+'</div>':'')+'</td>'
+      +'<td style="font-size:12.5px">'+esc(r.claim_type)+'</td><td>'+sevTag+'</td>'
+      +'<td style="font-size:12.5px">'+esc(r.title)+'</td>'
+      +'<td><span class="tag tag-'+CP_TAG[r.status]+'">'+esc(r.status_name)+'</span></td>'
+      +'<td style="font-size:11.5px;color:var(--text-sub)">'+esc(r.created_by)+'<br>'+esc(r.created_at)+'</td>'
+      +'<td><button class="btn btn-o btn-sm" onclick="showComplaint('+r.id+')">'+(canDeal?'✏️ 处置':'📄 详情')+'</button>'
+      +(r.lot_no?' <button class="btn btn-o btn-sm" onclick="gotoTrace(\''+esc(r.lot_no)+'\')">🔍 查批</button>':'')+'</td></tr>';
+  }).join('');
+}
+function gotoTrace(lotNo){
+  openPage('trace');
+  setTimeout(()=>{const el=document.getElementById('trace-kw');if(el){el.value=lotNo;doTrace()}},120);
+}
+async function showComplaintForm(){
+  const cus=await api('/api/customer');
+  const box=document.getElementById('addbox-cp');
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">➕ 登记客诉</div>'
+    +'<div class="form-row">'
+    +'<div class="field"><label>客户</label><select id="cp-cus" style="min-width:170px"><option value="">（可留空）</option>'
+    +cus.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>关联批号（可留空）</label><input id="cp-lot" placeholder="成品批号" style="width:210px"></div>'
+    +'<div class="field"><label>类型</label><select id="cp-type">'+CP_TYPES.map(t=>'<option>'+t+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>严重程度</label><select id="cp-sev">'
+    +'<option value="1">1 一般</option><option value="2">2 严重（影响使用）</option><option value="3">3 重大（停产/退货/索赔）</option></select></div>'
+    +'</div><div class="form-row">'
+    +'<div class="field" style="flex:1"><label>主题</label><input id="cp-title" placeholder="一句话说清问题" style="width:100%"></div></div>'
+    +'<div class="field" style="margin-top:6px"><label>客户反映内容</label><textarea id="cp-content" rows="3" style="width:100%;border:1px solid #d6e4f3;border-radius:8px;padding:8px"></textarea></div>'
+    +'<div style="text-align:right;margin-top:8px"><button class="btn btn-o" onclick="document.getElementById(\'addbox-cp\').style.display=\'none\'">收起</button> '
+    +'<button class="btn btn-p" onclick="saveComplaint()">✔ 登记</button></div><div id="cp-msg"></div>';
+}
+async function saveComplaint(){
+  const msg=document.getElementById('cp-msg');
+  const title=document.getElementById('cp-title').value.trim();
+  if(!title){msg.innerHTML='<div class="alertbar alert-bad">请填写主题</div>';return}
+  try{
+    const r=await api('/api/complaints',{method:'POST',body:JSON.stringify({
+      customer_id:Number(document.getElementById('cp-cus').value)||null,
+      lot_no:document.getElementById('cp-lot').value.trim(),
+      claim_type:document.getElementById('cp-type').value,
+      severity:Number(document.getElementById('cp-sev').value),
+      title:title,
+      content:document.getElementById('cp-content').value.trim()})});
+    toast('✔ 已登记 '+r.complaint_no);
+    document.getElementById('addbox-cp').style.display='none';
+    loadComplaints();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+async function showComplaint(id){
+  const d=await api('/api/complaints'+(document.getElementById('cp-kw').value?('?keyword='+encodeURIComponent(document.getElementById('cp-kw').value)):''));
+  const r=d.rows.find(x=>x.id===id);if(!r)return;
+  const canDeal=['admin','qm'].includes(ME.role);
+  const field=(label,val,cls)=>'<div style="font-size:12.5px;margin:6px 0"><span style="color:var(--text-sub)">'+label+'</span><br><span class="'+cls+'">'+esc(val||'—')+'</span></div>';
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
+    +'<h3>📣 '+esc(r.complaint_no)+' <span class="tag tag-'+CP_TAG[r.status]+'">'+esc(r.status_name)+'</span></h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:6px">'+esc(r.customer_name||'未指定客户')+' · '+esc(r.claim_type)+' · 严重程度 '+esc(r.severity_name)
+    +' · 登记 '+esc(r.created_by)+' '+esc(r.created_at)+'</div>'
+    +'<div class="panel" style="margin-bottom:10px">'
+    +field('主题','<b>'+esc(r.title)+'</b>')
+    +field('客户反映',r.content)
+    +(r.lot_no?'<div style="font-size:12.5px;margin:6px 0"><span style="color:var(--text-sub)">关联批次</span><br>'
+      +'<span class="tag tag-blue">'+esc(r.lot_no)+'</span> '+(r.coa_no?'<span class="tag tag-green">'+esc(r.coa_no)+'</span>':'')
+      +' <button class="btn btn-o btn-sm" onclick="closeModal();gotoTrace(\''+esc(r.lot_no)+'\')">🔍 查该批追溯</button></div>':'')
+    +'</div>'
+    +(canDeal?'<div class="perm-sec"><div class="ps-title">🛠 调查与处置（质量经理/管理员）</div>'
+      +'<div class="field" style="margin-bottom:6px"><label>原因分析</label><textarea id="cp-rc" rows="2" style="width:100%;border:1px solid #d6e4f3;border-radius:8px;padding:8px">'+esc(r.root_cause)+'</textarea></div>'
+      +'<div class="field" style="margin-bottom:6px"><label>纠正/预防措施</label><textarea id="cp-act" rows="2" style="width:100%;border:1px solid #d6e4f3;border-radius:8px;padding:8px">'+esc(r.action)+'</textarea></div>'
+      +'<div class="field" style="margin-bottom:6px"><label>回复客户内容</label><textarea id="cp-rep" rows="2" style="width:100%;border:1px solid #d6e4f3;border-radius:8px;padding:8px">'+esc(r.reply)+'</textarea></div>'
+      +'<div class="field"><label>状态</label><select id="cp-st2">'
+      +Object.keys(CP_ST).map(k=>'<option value="'+k+'"'+(Number(k)===r.status?' selected':'')+'>'+CP_ST[k]+'</option>').join('')+'</select>'
+      +'<span style="font-size:11.5px;color:var(--text-sub);margin-left:8px">关闭前必须填原因分析+措施+回复</span></div>'
+      +'<div style="text-align:right;margin-top:10px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+      +'<button class="btn btn-p" onclick="saveComplaintDeal('+id+')">✔ 保存处置</button></div><div id="cp-dmsg"></div></div>'
+      :'<div class="panel" style="font-size:12.5px">'
+      +field('原因分析',r.root_cause)+field('纠正措施',r.action)+field('回复客户',r.reply)
+      +(r.handled_by?'<div style="font-size:12px;color:var(--text-sub)">处置人 '+esc(r.handled_by)+' '+esc(r.handled_at)+'</div>':'')
+      +(r.closed_by?'<div style="font-size:12px;color:var(--text-sub)">关闭人 '+esc(r.closed_by)+' '+esc(r.closed_at)+'</div>':'')+'</div>');
+  document.getElementById('modal-mask').classList.add('show');
+}
+async function saveComplaintDeal(id){
+  const msg=document.getElementById('cp-dmsg');
+  try{
+    await api('/api/complaints/'+id,{method:'PUT',body:JSON.stringify({
+      root_cause:document.getElementById('cp-rc').value.trim(),
+      action:document.getElementById('cp-act').value.trim(),
+      reply:document.getElementById('cp-rep').value.trim(),
+      status:Number(document.getElementById('cp-st2').value)})});
+    toast('✔ 处置已保存');
+    closeModal();loadComplaints();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+
+/* ═══════════ 操作日志（第三批，仅管理员）═══════════ */
+const ACT_NAMES={create:'新增',update:'修改',delete:'停用',import:'导入',login:'登录',logout:'退出'};
+async function renderAuditPage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='📜 操作日志';
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='谁在什么时候改了什么（标准、判定、账号、职责、客诉…全部留痕）。排查"数据怎么变了"就查这里。';
+  c.appendChild(ttl);c.appendChild(desc);
+  const bar=document.createElement('div');bar.className='panel';
+  bar.innerHTML='<div class="searchbar">'
+    +'<select id="au-days" style="min-width:110px"><option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option><option value="365">近 1 年</option></select>'
+    +'<select id="au-user" style="min-width:120px"><option value="">全部用户</option></select>'
+    +'<select id="au-act" style="min-width:110px"><option value="">全部动作</option></select>'
+    +'<input id="au-kw" placeholder="搜对象/详情（如 user:qc、STD-001）" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadAudit()">'
+    +'<button class="btn btn-o" onclick="loadAudit()">🔍 查询</button></div>';
+  c.appendChild(bar);
+  const tbl=document.createElement('div');tbl.className='tbl-wrap';
+  tbl.innerHTML='<table><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>对象</th><th>详情</th></tr></thead><tbody id="tbody-au"></tbody></table></div>';
+  c.appendChild(tbl);
+  loadAudit(true);
+}
+async function loadAudit(fillOpts){
+  const days=document.getElementById('au-days').value;
+  const un=document.getElementById('au-user').value;
+  const ac=document.getElementById('au-act').value;
+  const kw=document.getElementById('au-kw').value;
+  const d=await api('/api/audit-logs?'+qs({days:days,username:un,action:ac,keyword:kw}));
+  if(fillOpts){
+    document.getElementById('au-user').innerHTML='<option value="">全部用户</option>'+d.users.map(u=>'<option value="'+esc(u)+'">'+esc(u)+'</option>').join('');
+    document.getElementById('au-act').innerHTML='<option value="">全部动作</option>'+d.actions.map(a=>'<option value="'+esc(a)+'">'+esc(ACT_NAMES[a]||a)+'</option>').join('');
+  }
+  const tb=document.getElementById('tbody-au');
+  if(!d.rows.length){tb.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text-sub);padding:24px">该条件下暂无日志</td></tr>';return}
+  tb.innerHTML=d.rows.map(r=>'<tr><td style="font-size:12px;color:var(--text-sub)">'+esc(r.created_at)+'</td>'
+    +'<td><b>'+esc(r.username)+'</b></td>'
+    +'<td><span class="tag tag-blue">'+esc(ACT_NAMES[r.action]||r.action)+'</span></td>'
+    +'<td style="font-size:12.5px">'+esc(r.target)+'</td>'
+    +'<td style="font-size:12.5px;color:var(--text-sub)">'+esc(r.detail)+'</td></tr>').join('');
 }
 
 /* ═══════════ 启动 ═══════════ */

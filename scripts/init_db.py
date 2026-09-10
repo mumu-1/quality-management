@@ -9,7 +9,7 @@ from database import Base, engine, SessionLocal, ensure_schema
 from models import (User, Material, Supplier, Customer, Workshop, Station,
                     Team, Equipment, QcStandard, QcStandardItem, UserStation,
                     IncomingLot, Sample, TestRecord, TestItem, Ncr,
-                    ProductionLot, Coa, Department, Position, DutyTemplate)
+                    ProductionLot, Coa, Department, Position, DutyTemplate, Complaint)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -720,10 +720,11 @@ def seed_history(db):
 
 # ═══════════════ 部门 / 职务 / 岗位职责（分权责：部门+职务 → 模块权限）═══════════════
 PAGES_ALL = ["dashboard", "screen", "board", "prodlot", "qcstandard", "incoming", "ncr",
-             "trace", "report", "material", "supplier", "customer", "workshop", "station",
-             "team", "equipment", "department", "position", "user", "duty"]
+             "trace", "report", "complaint", "material", "supplier", "customer", "workshop",
+             "station", "team", "equipment", "department", "position", "user", "duty", "audit"]
 MANAGE_ALL = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
-              "department", "position", "user", "duty", "qcstandard", "incoming", "ncr", "prodlot"]
+              "department", "position", "user", "duty", "audit", "qcstandard", "incoming", "ncr",
+              "prodlot", "complaint"]
 
 _DEPTS = [
     ("DEPT-GM", "总经办", 1), ("DEPT-IT", "信息部", 2), ("DEPT-QC", "质量部", 3),
@@ -741,9 +742,10 @@ _POSITIONS = [
 
 _BASE = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
          "department", "position"]
-_QC = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
+_QC = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace",
+       "report", "complaint"]
 _QC_LINE = ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace",
-            "report", "material", "equipment"]
+            "report", "complaint", "material", "equipment"]
 
 # (部门, 职务, 可见模块, 可管模块)；部门 None = 通用职务兜底
 _DUTIES = [
@@ -763,9 +765,9 @@ _DUTIES = [
     ("DEPT-PR", "POS-PL", ["dashboard", "screen", "prodlot", "qcstandard", "trace",
                            "workshop", "station", "equipment", "team"], ["prodlot"]),
     ("DEPT-PR", "POS-OP", ["dashboard", "prodlot"], []),
-    ("DEPT-PU", "POS-PU-MGR", ["dashboard", "incoming", "ncr", "trace", "material",
+    ("DEPT-PU", "POS-PU-MGR", ["dashboard", "incoming", "ncr", "trace", "complaint", "material",
                                "supplier", "customer"], ["supplier", "incoming", "ncr"]),
-    ("DEPT-PU", "POS-BUYER", ["dashboard", "incoming", "ncr", "trace", "material",
+    ("DEPT-PU", "POS-BUYER", ["dashboard", "incoming", "ncr", "trace", "complaint", "material",
                               "supplier", "customer"], ["supplier", "incoming", "ncr"]),
     ("DEPT-WH", "POS-WH-MGR", ["dashboard", "incoming", "ncr", "trace", "material",
                                "customer", "workshop"], []),
@@ -833,6 +835,64 @@ def seed_duties(db):
     print(f"✔ 岗位职责演示数据: 部门 +{n_dep} / 职务 +{n_pos} / 职责模板 +{n_duty} / 账号挂岗 {n_user}")
 
 
+
+def seed_complaints(db):
+    """演示客诉：已关闭/调查中/待受理各一条（幂等）"""
+    db.flush()
+    if db.query(Complaint).count() > 0:
+        return
+    coas = db.query(Coa).order_by(Coa.id).all()
+    if not coas:
+        return
+    cus = {c.code: c for c in db.query(Customer).all()}
+    rows = []
+    lot1 = db.get(ProductionLot, coas[0].prod_id)
+    lot2 = db.get(ProductionLot, coas[-1].prod_id) if len(coas) > 1 else lot1
+    # ① 已关闭：完整 8D 式闭环
+    rows.append(dict(
+        complaint_no="CS-%d-001" % datetime.now().year,
+        customer_id=cus.get("CUS-001").id if cus.get("CUS-001") else None,
+        lot_no=lot1.lot_no if lot1 else "", coa_no=coas[0].coa_no,
+        claim_type="质量异议", severity=2,
+        title="客户反馈磁性异物接近上限，要求提供原因说明",
+        content="客户进厂复检发现我方第 3 批产品磁性异物 96 ppb（标准 ≤100 ppb），虽合格但接近上限，要求说明并提交改善措施。",
+        root_cause="除磁机磁棒使用周期超过规定（超过 200 批未更换），导致除磁效率下降；同时该批原料硅藻土批次磁性异物偏高。",
+        action="1) 立即更换除磁机磁棒并在除磁工序增加磁棒点检记录；2) 将该批原料供应商纳入加严检验（每批必检磁性异物）；3) 修订除磁工序自检项，班组长每班记录磁棒状态。",
+        reply="已提交 8D 报告，说明原因与三项改善措施，并附该批 COA 与整改证据。客户确认接受。",
+        status=3, created_by="qc", handled_by="qm", closed_by="qm"))
+    # ② 调查中
+    if lot2:
+        rows.append(dict(
+            complaint_no="CS-%d-002" % datetime.now().year,
+            customer_id=cus.get("CUS-002").id if cus.get("CUS-002") else None,
+            lot_no=lot2.lot_no, coa_no=coas[-1].coa_no if coas else "",
+            claim_type="包装标识", severity=1,
+            title="包装袋批次标识与送货单不一致",
+            content="客户反映到货 5 袋中有 1 袋批次标签打印模糊，扫码无法识别，要求补发清晰标签。",
+            root_cause="", action="", reply="", status=1, created_by="qc", handled_by="qm"))
+    # ③ 待受理
+    rows.append(dict(
+        complaint_no="CS-%d-003" % datetime.now().year,
+        customer_id=cus.get("CUS-002").id if cus.get("CUS-002") else None,
+        lot_no="", coa_no="", claim_type="其他", severity=1,
+        title="询问下一批交货时间与检测项目",
+        content="客户询问下周交付批次的检测项目是否包含氯离子，需质量部答复。",
+        root_cause="", action="", reply="", status=0, created_by="buyer"))
+    for r in rows:
+        kw = dict(r)
+        st = kw.pop("status")
+        c = Complaint(**kw)
+        c.status = st
+        if st >= 2:
+            c.handled_at = datetime.now()
+        if st == 3:
+            c.closed_at = datetime.now()
+        db.add(c)
+    db.flush()
+    db.commit()          # 必须提交：session 关闭时未提交的数据会回滚
+    print(f"✔ 客诉演示数据: {len(rows)} 条（已关闭1 / 调查中1 / 待受理1）")
+
+
 def seed():
     ensure_schema()
     db = SessionLocal()
@@ -846,6 +906,7 @@ def seed():
             seed_incoming(db)
             seed_production(db)
             seed_history(db)
+            seed_complaints(db)
             print("DB 已有基础数据，完成增量补种")
             return
 
@@ -974,6 +1035,8 @@ def seed():
         seed_production(db)
         # ═══ 第5步：历史数据(报表/SPC/大屏) ═══
         seed_history(db)
+        # ═══ 第三批：客诉演示数据 ═══
+        seed_complaints(db)
     finally:
         db.close()
 

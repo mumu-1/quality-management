@@ -50,12 +50,13 @@ check("错误密码被拒", bad.get("_err") == 401)
 def keys(d):
     return sorted([m["key"] for m in d.get("menus", [])])
 
-check("admin 可见全部20页", keys(admin) == sorted(
+check("admin 可见全部22页", keys(admin) == sorted(
     ["dashboard", "screen", "board", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report",
-     "material", "supplier", "customer", "workshop", "station", "team", "equipment",
-     "department", "position", "user", "duty"]), str(keys(admin)))
-check("qc(检验员) 可见10页且无账号管理", keys(qc) == sorted(
-    ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "equipment"]), str(keys(qc)))
+     "complaint", "material", "supplier", "customer", "workshop", "station", "team", "equipment",
+     "department", "position", "user", "duty", "audit"]), str(keys(admin)))
+check("qc(检验员) 可见11页且无账号管理", keys(qc) == sorted(
+    ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report",
+     "complaint", "material", "equipment"]), str(keys(qc)))
 check("store(仓储) 无供应商管理", "supplier" not in keys(store), str(keys(store)))
 check("buyer(采购) 可管理 supplier", any(m["key"] == "supplier" and m["manage"] for m in buyer.get("menus", [])))
 check("qm(质量经理) 可管理 material", any(m["key"] == "material" and m["manage"] for m in qm.get("menus", [])))
