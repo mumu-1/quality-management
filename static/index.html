@@ -222,7 +222,7 @@ function enterApp(){
   renderSidebar();
   openPage('dashboard');
 }
-function roleName(k){return {admin:'系统管理员',boss:'高层',qm:'质量经理',qc:'检验员',sampler:'取样员',prodlead:'班组长/主管',buyer:'采购',store:'仓储'}[k]||k}
+function roleName(k){return {admin:'系统管理员',boss:'高层',qm:'质量经理',qc:'检验员',sampler:'取样员',prodlead:'班组长/主管',buyer:'采购',store:'仓储',worker:'操作工'}[k]||k}
 function canManage(key){const m=MENUS.find(x=>x.key===key);return !!(m&&m.manage)}
 function hasPage(key){return MENUS.some(x=>x.key===key)}
 

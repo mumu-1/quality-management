@@ -62,6 +62,7 @@ ROLE_PAGES = {
     "prodlead":  ["dashboard", "screen", "prodlot", "trace", "qcstandard", "workshop", "station", "equipment", "team"],
     "buyer":     ["dashboard", "incoming", "ncr", "trace", "material", "supplier", "customer"],
     "store":     ["dashboard", "incoming", "ncr", "trace", "material", "customer", "workshop"],
+    "worker":    ["dashboard", "prodlot"],
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
@@ -1965,7 +1966,8 @@ def perm_matrix(token: str = Header(""), db: Session = Depends(get_db)):
 
 # ═══════════════════════ 账号管理 ═══════════════════════
 ROLE_NAMES = {"admin": "系统管理员", "boss": "高层", "qm": "质量经理", "qc": "检验员",
-              "sampler": "取样员", "prodlead": "班组长/主管", "buyer": "采购", "store": "仓储"}
+              "sampler": "取样员", "prodlead": "班组长/主管", "buyer": "采购", "store": "仓储",
+              "worker": "操作工"}
 
 
 def _save_user_stations(db, user_id, station_ids, keep_primary=True):
@@ -2232,10 +2234,20 @@ def health():
 
 
 if __name__ == "__main__":
+    import socket
     import uvicorn
-    print("=" * 46)
-    print("  生产质量管理系统 · 第1步地基")
-    print("  打开浏览器访问: http://localhost:8000")
-    print("  演示账号: admin / qm / qc / prodlead 等, 密码 123456")
-    print("=" * 46)
+    print("=" * 56)
+    print("  生产质量管理系统 (QMS)")
+    print("  本机访问:     http://localhost:8000")
+    try:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        _lan = _s.getsockname()[0]
+        _s.close()
+        print(f"  局域网/手机:  http://{_lan}:8000   （车间电脑、手机连同一网络即可打开）")
+    except Exception:      # noqa: BLE001
+        pass
+    print("  演示账号: admin / qm / qc / prodlead / qc2 等, 密码 123456")
+    print("  生产模式建议: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4")
+    print("=" * 56)
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")

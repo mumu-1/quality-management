@@ -11,6 +11,12 @@ __pycache__/
 # 备份
 backups/
 
+# 账号初始密码表（含明文密码，严禁提交）
+账号初始密码表_*.csv
+
+# 迁移导出 SQL
+migrate_*.sql
+
 # 系统/编辑器
 .DS_Store
 Thumbs.db
