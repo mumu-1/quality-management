@@ -23,7 +23,11 @@ import models as M
 ensure_schema()
 
 app = FastAPI(title="生产质量管理系统")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# CORS：默认只允许本机（前端与接口同源，本来不需要跨域）；公网部署要放别的域名时用环境变量指定
+_ALLOW_ORIGINS = [x.strip() for x in os.environ.get(
+    "QMS_ALLOW_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_ALLOW_ORIGINS, allow_methods=["*"],
+                   allow_headers=["*"])
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -221,16 +225,81 @@ class LoginIn(BaseModel):
     password: str
 
 
+# ── 登录防爆破（公网暴露必备）：同一账号+IP 连错 5 次锁 10 分钟；
+#    同一 IP 连错 20 次（换账号猜）锁 30 分钟。重启服务即清空。
+LOGIN_MAX_FAILS = int(os.environ.get("QMS_LOGIN_MAX_FAILS", "5"))
+LOGIN_LOCK_MINUTES = int(os.environ.get("QMS_LOGIN_LOCK_MINUTES", "10"))
+IP_MAX_FAILS = int(os.environ.get("QMS_IP_MAX_FAILS", "20"))
+IP_LOCK_MINUTES = int(os.environ.get("QMS_IP_LOCK_MINUTES", "30"))
+_LOGIN_FAILS = {}      # "用户名|IP" -> [连续失败次数, 锁定到期时间]
+_IP_FAILS = {}         # "IP" -> [连续失败次数, 锁定到期时间]
+
+
+def _client_ip(request):
+    if request is None:
+        return "?"
+    # 经 cpolar/nginx 等反代时取真实客户端 IP
+    for h in ("x-forwarded-for", "x-real-ip"):
+        v = request.headers.get(h)
+        if v:
+            return v.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+def _locked_until(bucket, key):
+    it = bucket.get(key)
+    if not it:
+        return None
+    if it[1] and datetime.now() < it[1]:
+        return it[1]
+    if it[1] and datetime.now() >= it[1]:
+        bucket.pop(key, None)
+    return None
+
+
+def _note_fail(bucket, key, max_fails, lock_minutes):
+    it = bucket.get(key, [0, None])
+    it[0] = (it[0] or 0) + 1
+    if it[0] >= max_fails:
+        it[1] = datetime.now() + timedelta(minutes=lock_minutes)
+        it[0] = 0
+    bucket[key] = it
+    return bool(it[1])
+
+
 @app.post("/api/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    u = db.query(M.User).filter(M.User.username == body.username.strip()).first()
+def login(body: LoginIn, request: Request = None, db: Session = Depends(get_db)):
+    uname = (body.username or "").strip()
+    ip = _client_ip(request)
+    key, ipkey = f"{uname}|{ip}", ip
+    # ① 账号+IP 锁定
+    until = _locked_until(_LOGIN_FAILS, key)
+    if until:
+        mins = max(1, int((until - datetime.now()).total_seconds() // 60) + 1)
+        raise HTTPException(429, f"密码连续错误次数过多，请 {mins} 分钟后再试")
+    # ② 同 IP 换账号猜
+    until2 = _locked_until(_IP_FAILS, ipkey)
+    if until2:
+        mins = max(1, int((until2 - datetime.now()).total_seconds() // 60) + 1)
+        raise HTTPException(429, f"该网络登录失败次数过多，请 {mins} 分钟后再试")
+    u = db.query(M.User).filter(M.User.username == uname).first()
     if not u or not check_pwd(body.password, u.password_salt, u.password_hash):
+        db.add(M.AuditLog(username=uname or "(空)", action="login_fail",
+                          target=f"ip:{ip}", detail="密码错误"))
+        db.commit()
+        locked = _note_fail(_LOGIN_FAILS, key, LOGIN_MAX_FAILS, LOGIN_LOCK_MINUTES)
+        _note_fail(_IP_FAILS, ipkey, IP_MAX_FAILS, IP_LOCK_MINUTES)
+        if locked:
+            raise HTTPException(429, f"密码连续错误 {LOGIN_MAX_FAILS} 次，账号已锁定 "
+                                     f"{LOGIN_LOCK_MINUTES} 分钟")
         raise HTTPException(401, "用户名或密码错误")
     if not u.enabled:
         raise HTTPException(403, "账号已停用，请联系管理员")
+    _LOGIN_FAILS.pop(key, None)
     token = uuid.uuid4().hex
     db.add(M.AuthToken(token=token, user_id=u.id,
                        expires_at=datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)))
+    db.add(M.AuditLog(username=u.username, action="login", target=f"ip:{ip}", detail="登录成功"))
     db.commit()
     attach_duty(u, db)
     pm = page_meta(u)
@@ -2603,6 +2672,43 @@ def complaint_update(cid: int, body: ComplaintEditIn, token: str = Header(""),
     return {"ok": True, "status": c.status}
 
 
+# ═══════════════════════ 登录锁定管理（管理员，第五批）═══════════════════════
+@app.get("/api/admin/login-locks")
+def login_locks(token: str = Header(""), db: Session = Depends(get_db)):
+    """查看当前被锁定的账号/IP（公网暴露后运维排查用）"""
+    u = require_user(token, db)
+    require_page(u, "user")
+    now = datetime.now()
+    out = []
+    for k, v in list(_LOGIN_FAILS.items()):
+        if v[1] and v[1] > now:
+            out.append({"type": "账号+IP", "key": k, "解锁时间": v[1].strftime("%Y-%m-%d %H:%M:%S")})
+    for k, v in list(_IP_FAILS.items()):
+        if v[1] and v[1] > now:
+            out.append({"type": "IP", "key": k, "解锁时间": v[1].strftime("%Y-%m-%d %H:%M:%S")})
+    return {"rows": out, "total": len(out),
+            "policy": {"账号+IP 连错次数": LOGIN_MAX_FAILS, "锁定分钟": LOGIN_LOCK_MINUTES,
+                       "同 IP 连错次数": IP_MAX_FAILS, "IP 锁定分钟": IP_LOCK_MINUTES}}
+
+
+@app.post("/api/admin/login-locks/clear")
+def login_locks_clear(key: str = "", token: str = Header(""), db: Session = Depends(get_db)):
+    """解锁：key 为空清空全部；否则只清该 key（如 admin|1.2.3.4）"""
+    u = require_user(token, db)
+    require_page(u, "user")
+    if key:
+        _LOGIN_FAILS.pop(key, None)
+        _IP_FAILS.pop(key, None)
+        n = 1
+    else:
+        n = len(_LOGIN_FAILS) + len(_IP_FAILS)
+        _LOGIN_FAILS.clear()
+        _IP_FAILS.clear()
+    audit(db, u.username, "update", "login-locks", f"解除登录锁定（{key or '全部'}）")
+    db.commit()
+    return {"ok": True, "cleared": n}
+
+
 # ═══════════════════════ 操作日志（第三批）═══════════════════════
 @app.get("/api/audit-logs")
 def audit_logs(username: str = "", action: str = "", keyword: str = "", days: int = 30,
@@ -2962,4 +3068,5 @@ if __name__ == "__main__":
     print("  演示账号: admin / qm / qc / prodlead / qc2 等, 密码 123456")
     print("  生产模式建议: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4")
     print("=" * 56)
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    uvicorn.run(app, host=os.environ.get("QMS_HOST", "0.0.0.0"),
+            port=int(os.environ.get("QMS_PORT", "8000")), log_level="warning")
