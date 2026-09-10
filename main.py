@@ -34,10 +34,13 @@ TOKEN_TTL_HOURS = 12
 # 页面 key → (菜单显示名, 分组, 图标)
 PAGES = {
     "dashboard":   ("📊 质量总览", "总览", ""),
+    "screen":      ("🖥️ 车间大屏", "总览", "screen"),
     "prodlot":     ("🏭 生产批次", "生产制造", "prodlot"),
     "qcstandard":  ("📋 检验标准库", "质量管控", "qcstandard"),
     "incoming":    ("🚚 来料检验", "质量管控", "incoming"),
     "ncr":         ("⚠️ 不合格处理", "质量管控", "ncr"),
+    "trace":       ("🔍 批次追溯", "质量管控", "trace"),
+    "report":      ("📈 统计报表", "质量管控", "report"),
     "material":    ("📦 物料管理", "基础资料", "material"),
     "supplier":    ("🚚 供应商", "基础资料", "supplier"),
     "customer":    ("🤝 客户", "基础资料", "customer"),
@@ -47,16 +50,18 @@ PAGES = {
     "equipment":   ("🔧 设备管理", "基础资料", "equipment"),
     "user":        ("🛠️ 账号管理", "系统管理", "user"),
 }
+_QC_CORE = ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
+_BASEINFO = ["material", "supplier", "customer", "workshop", "station", "team", "equipment"]
 # 角色 → 可访问页面
 ROLE_PAGES = {
     "admin":     list(PAGES.keys()),
-    "boss":      ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
-    "qm":        ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment"],
-    "qc":        ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "equipment"],
+    "boss":      _QC_CORE + _BASEINFO,
+    "qm":        _QC_CORE + _BASEINFO,
+    "qc":        ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "equipment"],
     "sampler":   ["dashboard", "incoming", "material"],
-    "prodlead":  ["dashboard", "prodlot", "qcstandard", "workshop", "station", "equipment", "team"],
-    "buyer":     ["dashboard", "incoming", "ncr", "material", "supplier", "customer"],
-    "store":     ["dashboard", "incoming", "ncr", "material", "customer", "workshop"],
+    "prodlead":  ["dashboard", "screen", "prodlot", "trace", "qcstandard", "workshop", "station", "equipment", "team"],
+    "buyer":     ["dashboard", "incoming", "ncr", "trace", "material", "supplier", "customer"],
+    "store":     ["dashboard", "incoming", "ncr", "trace", "material", "customer", "workshop"],
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
@@ -865,13 +870,25 @@ def test_list(check_type: str = "iqc", result: str = "", keyword: str = "",
     rows = q.order_by(M.TestRecord.id.desc()).limit(200).all()
     out = []
     for tr in rows:
-        lot = tr.lot or db.get(M.IncomingLot, tr.lot_id)
-        m = db.get(M.Material, lot.material_id) if lot else None
+        # 来料检验挂 lot_id；生产批（过程/成品）检验挂 prod_id → 分别取名，避免空主键查询
+        lot = (tr.lot or db.get(M.IncomingLot, tr.lot_id)) if tr.lot_id else None
+        prod = (tr.prod or db.get(M.ProductionLot, tr.prod_id)) if tr.prod_id else None
+        if lot:
+            m = db.get(M.Material, lot.material_id) if lot.material_id else None
+            obj_no = lot.lot_no
+            mat_name = f"{m.name}（{m.code}）" if m else ""
+        elif prod:
+            m = db.get(M.Material, prod.material_id) if prod.material_id else None
+            st = db.get(M.Station, prod.station_id) if prod.station_id else None
+            obj_no = prod.lot_no
+            mat_name = (f"{m.name}（{m.code}）·" if m else "") + (st.name if st else "")
+        else:
+            obj_no, mat_name = "", ""
         items = db.query(M.TestItem).filter(M.TestItem.test_id == tr.id) \
             .order_by(M.TestItem.seq).all()
         out.append({
-            "id": tr.id, "test_no": tr.test_no, "lot_no": lot.lot_no if lot else "",
-            "material_name": f"{m.name}（{m.code}）" if m else "",
+            "id": tr.id, "test_no": tr.test_no, "lot_no": obj_no,
+            "material_name": mat_name,
             "result": tr.result,
             "result_name": {0: "检验中", 1: "合格", 2: "不合格"}.get(tr.result, "?"),
             "tested_by": tr.tested_by,
@@ -1344,6 +1361,485 @@ def fg_available(token: str = Header(""), db: Session = Depends(get_db)):
     require_page(u, "prodlot")
     rows = db.query(M.ProductionLot).filter(M.ProductionLot.status == 5).all()
     return [_prod_out(db, p) for p in rows]
+# ═══════════════════════ 批次追溯（第5步）═══════════════════════
+def _trace_test_list(db, prod_id=None, lot_id=None):
+    """某批次的全部检验单（含逐项明细与不合格项）"""
+    q = db.query(M.TestRecord)
+    if prod_id:
+        q = q.filter(M.TestRecord.prod_id == prod_id)
+    else:
+        q = q.filter(M.TestRecord.lot_id == lot_id)
+    out = []
+    for tr in q.order_by(M.TestRecord.id).all():
+        std = db.get(M.QcStandard, tr.std_id)
+        items = db.query(M.TestItem).filter(M.TestItem.test_id == tr.id) \
+            .order_by(M.TestItem.seq).all()
+        out.append({
+            "test_no": tr.test_no, "check_type": tr.check_type,
+            "check_type_name": COA_CHECK_TYPES.get(tr.check_type, "来料检验"),
+            "std_name": std.name if std else "", "result": tr.result,
+            "tested_by": tr.tested_by,
+            "created_at": tr.created_at.strftime("%Y-%m-%d %H:%M") if tr.created_at else "",
+            "items": [{"indicator": it.indicator, "actual": it.actual, "unit": it.unit,
+                       "min_val": it.min_val, "max_val": it.max_val,
+                       "pass": it.pass_flag, "is_key": it.is_key} for it in items],
+            "fail_items": [it.indicator for it in items if it.pass_flag == 0],
+        })
+    return out
+
+
+def _trace_prod_node(db, p, problems):
+    st = db.get(M.Station, p.station_id) if p.station_id else None
+    eq = db.get(M.Equipment, p.equipment_id) if p.equipment_id else None
+    team = db.get(M.Team, p.team_id) if p.team_id else None
+    mat = db.get(M.Material, p.material_id) if p.material_id else None
+    ncrs = db.query(M.Ncr).filter(M.Ncr.prod_id == p.id).all()
+    coa = db.query(M.Coa).filter(M.Coa.prod_id == p.id).order_by(M.Coa.id.desc()).first()
+    tests = _trace_test_list(db, prod_id=p.id)
+    node = {
+        "kind": "production", "lot_no": p.lot_no,
+        "station_code": st.code if st else "", "station_name": st.name if st else "",
+        "equipment_name": eq.name if eq else "", "team_name": team.name if team else "",
+        "operator": p.operator, "qty": p.qty, "unit": p.unit,
+        "material_name": f"{mat.name}（{mat.code}）" if mat else "中间料",
+        "status": p.status, "status_name": PROD_STATUS.get(p.status, str(p.status)),
+        "created_at": p.created_at.strftime("%Y-%m-%d %H:%M") if p.created_at else "",
+        "parent_lot_no": p.parent_lot_no, "parent_type": p.parent_type,
+        "tests": tests,
+        "ncr": [{"ncr_no": n.ncr_no, "status_name": NCR_STATUS.get(n.status, ""),
+                 "fail_summary": n.fail_summary, "disposition": n.disposition} for n in ncrs],
+        "coa_no": coa.coa_no if coa else None,
+    }
+    if p.status in (3, 6):
+        problems.append({"lot_no": p.lot_no, "station_name": node["station_name"],
+                         "reason": "该批次检验不合格被冻结："
+                                   + (ncrs[0].fail_summary[:80] if ncrs else "")})
+    return node
+
+
+def _trace_raw_node(db, lot, problems):
+    mat = db.get(M.Material, lot.material_id) if lot.material_id else None
+    sup = db.get(M.Supplier, lot.supplier_id) if lot.supplier_id else None
+    ncrs = db.query(M.Ncr).filter(M.Ncr.lot_id == lot.id).all()
+    node = {
+        "kind": "incoming", "lot_no": lot.lot_no,
+        "material_name": f"{mat.name}（{mat.code}）" if mat else "",
+        "supplier_name": sup.name if sup else "", "supplier_lot": lot.supplier_lot,
+        "qty": lot.qty, "unit": lot.unit, "vehicle": lot.vehicle,
+        "arrival_by": lot.arrival_by,
+        "status": lot.status, "status_name": LOT_STATUS.get(lot.status, ""),
+        "created_at": lot.created_at.strftime("%Y-%m-%d %H:%M") if lot.created_at else "",
+        "tests": _trace_test_list(db, lot_id=lot.id),
+        "ncr": [{"ncr_no": n.ncr_no, "status_name": NCR_STATUS.get(n.status, ""),
+                 "fail_summary": n.fail_summary, "disposition": n.disposition} for n in ncrs],
+        "coa_no": None,
+    }
+    if lot.status == 3:
+        problems.append({"lot_no": lot.lot_no, "station_name": "来料",
+                         "reason": "原料检验不合格被冻结：" + (ncrs[0].fail_summary[:80] if ncrs else "")})
+    return node
+
+
+@app.get("/api/trace")
+def trace(lot_no: str, token: str = Header(""), db: Session = Depends(get_db)):
+    """批次追溯：输入成品/生产/来料批号，向上逐级还原完整链路（含检验数据与不合格标源）"""
+    u = require_user(token, db)
+    require_page(u, "trace")
+    lot_no = (lot_no or "").strip()
+    if not lot_no:
+        raise HTTPException(400, "请输入批号")
+    problems = []
+    chain = []
+    cur = db.query(M.ProductionLot).filter(M.ProductionLot.lot_no == lot_no).first()
+    if cur:
+        visited = set()
+        while cur and len(chain) < 15:
+            chain.append(_trace_prod_node(db, cur, problems))
+            if cur.parent_type == "incoming":
+                raw = db.query(M.IncomingLot).filter(
+                    M.IncomingLot.lot_no == cur.parent_lot_no).first()
+                if raw:
+                    chain.append(_trace_raw_node(db, raw, problems))
+                break
+            if not cur.parent_lot_no or cur.lot_no in visited:
+                break
+            visited.add(cur.lot_no)
+            cur = db.query(M.ProductionLot).filter(
+                M.ProductionLot.lot_no == cur.parent_lot_no).first()
+    else:
+        raw = db.query(M.IncomingLot).filter(M.IncomingLot.lot_no == lot_no).first()
+        if not raw:
+            # 模糊提示相近批号
+            hint = db.query(M.ProductionLot).filter(
+                M.ProductionLot.lot_no.like(f"%{lot_no}%")).limit(3).all()
+            hint2 = db.query(M.IncomingLot).filter(
+                M.IncomingLot.lot_no.like(f"%{lot_no}%")).limit(3).all()
+            tips = [x.lot_no for x in hint] + [x.lot_no for x in hint2]
+            raise HTTPException(404, "未找到该批号" + (f"，相近的有：{tips}" if tips else ""))
+        chain.append(_trace_raw_node(db, raw, problems))
+    total_tests = sum(len(n["tests"]) for n in chain)
+    fail_tests = sum(1 for n in chain for t in n["tests"] if t["result"] == 2)
+    return {"lot_no": lot_no, "chain": chain, "problems": problems,
+            "summary": {"hops": len(chain), "tests": total_tests,
+                        "fail_tests": fail_tests,
+                        "has_problem": len(problems) > 0,
+                        "coa_no": next((n.get("coa_no") for n in chain if n.get("coa_no")), None)}}
+
+
+# ═══════════════════════ 统计报表 + Excel 导出（第5步）═══════════════════════
+def _rate_of(trs, ctype):
+    xs = [t for t in trs if t.check_type == ctype]
+    p = len([t for t in xs if t.result == 1])
+    f = len([t for t in xs if t.result == 2])
+    return {"total": len(xs), "pass": p, "fail": f,
+            "rate": round(p * 100.0 / (p + f), 1) if (p + f) else None}
+
+
+@app.get("/api/reports/summary")
+def reports_summary(days: int = 30, token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "report")
+    days = max(1, min(days, 365))
+    since = datetime.now() - timedelta(days=days)
+    trs = db.query(M.TestRecord).filter(M.TestRecord.created_at >= since).all()
+    ncrs = db.query(M.Ncr).filter(M.Ncr.created_at >= since).all()
+    # 柏拉图：不合格项按指标计数
+    fails = db.query(M.TestItem).join(
+        M.TestRecord, M.TestItem.test_id == M.TestRecord.id).filter(
+        M.TestItem.pass_flag == 0, M.TestRecord.created_at >= since).all()
+    cnt = {}
+    for f in fails:
+        cnt[f.indicator] = cnt.get(f.indicator, 0) + 1
+    pareto = sorted(({"name": k, "count": v} for k, v in cnt.items()),
+                    key=lambda x: -x["count"])
+    # 趋势：按日
+    trend_map = {}
+    for t in trs:
+        d = t.created_at.strftime("%m-%d") if t.created_at else "?"
+        e = trend_map.setdefault(d, {"date": d, "iqc": [0, 0], "ipqc": [0, 0], "oqc": [0, 0]})
+        if t.result in (1, 2) and t.check_type in e:
+            e[t.check_type][0] += 1
+            if t.result == 1:
+                e[t.check_type][1] += 1
+    trend = []
+    for d in sorted(trend_map.keys()):
+        e = trend_map[d]
+        row = {"date": d, "iqc": e["iqc"][1], "ipqc": e["ipqc"][1], "oqc": e["oqc"][1]}
+        for k in ("iqc", "ipqc", "oqc"):
+            tot = e[k][0]
+            row[k + "_rate"] = round(e[k][1] * 100.0 / tot, 0) if tot else None
+        trend.append(row)
+    prod = db.query(M.ProductionLot).all()
+    return {
+        "days": days,
+        "iqc": _rate_of(trs, "iqc"), "ipqc": _rate_of(trs, "ipqc"), "oqc": _rate_of(trs, "oqc"),
+        "ncr": {"total": len(ncrs),
+                "pending": len([n for n in ncrs if n.status == 0]),
+                "by_status": {NCR_STATUS[k]: len([n for n in ncrs if n.status == k])
+                              for k in NCR_STATUS}},
+        "pareto": pareto[:10],
+        "trend": trend,
+        "lots": {"production": len(prod),
+                 "frozen": len([p for p in prod if p.status in (3, 6)]),
+                 "fg_ok": len([p for p in prod if p.status == 5]),
+                 "coa": db.query(M.Coa).count()},
+    }
+
+
+@app.get("/api/reports/export")
+def reports_export(days: int = 30, token: str = Header(""), db: Session = Depends(get_db)):
+    """导出 Excel 月报：汇总 / 检验明细 / 不合格(NCR) 三张表"""
+    u = require_user(token, db)
+    require_page(u, "report")
+    days = max(1, min(days, 365))
+    since = datetime.now() - timedelta(days=days)
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill
+    wb = openpyxl.Workbook()
+    head_font = Font(bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", fgColor="2F6FA8")
+
+    def style(ws, headers, rows, widths=None):
+        ws.append(headers)
+        for c in ws[1]:
+            c.font, c.fill = head_font, head_fill
+            c.alignment = Alignment(horizontal="center")
+        for r in rows:
+            ws.append(r)
+        for i, w in enumerate(widths or [], start=1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    # Sheet1 汇总
+    ws1 = wb.active
+    ws1.title = "汇总"
+    trs = db.query(M.TestRecord).filter(M.TestRecord.created_at >= since).all()
+    ncrs = db.query(M.Ncr).filter(M.Ncr.created_at >= since).all()
+    prod = db.query(M.ProductionLot).all()
+    style(ws1, ["项目", "数值", "说明"], [
+        ["统计区间", f"近 {days} 天", since.strftime("%Y-%m-%d") + " 起"],
+        ["来料检验(IQC)", f"{_rate_of(trs,'iqc')['total']} 单", f"合格率 {_rate_of(trs,'iqc')['rate']}%"],
+        ["过程检验(IPQC)", f"{_rate_of(trs,'ipqc')['total']} 单", f"合格率 {_rate_of(trs,'ipqc')['rate']}%"],
+        ["成品检验(OQC)", f"{_rate_of(trs,'oqc')['total']} 单", f"合格率 {_rate_of(trs,'oqc')['rate']}%"],
+        ["NCR 总数", len(ncrs), f"待处理 {len([n for n in ncrs if n.status==0])}"],
+        ["生产批次", len(prod), f"冻结 {len([p for p in prod if p.status in (3,6)])} / 成品合格 {len([p for p in prod if p.status==5])}"],
+        ["COA 报告", db.query(M.Coa).count(), "成品检验合格自动生成"],
+    ], [22, 24, 40])
+    # Sheet2 检验明细
+    ws2 = wb.create_sheet("检验明细")
+    rows2 = []
+    for t in sorted(trs, key=lambda x: x.id):
+        std = db.get(M.QcStandard, t.std_id)
+        obj = ""
+        if t.prod_id:
+            pl = db.get(M.ProductionLot, t.prod_id)
+            obj = pl.lot_no if pl else ""
+        elif t.lot_id:
+            il = db.get(M.IncomingLot, t.lot_id)
+            obj = il.lot_no if il else ""
+        for it in db.query(M.TestItem).filter(M.TestItem.test_id == t.id).order_by(M.TestItem.seq).all():
+            rows2.append([t.test_no, COA_CHECK_TYPES.get(t.check_type, "来料检验"), obj,
+                          std.name if std else "", it.indicator, it.actual, it.unit,
+                          (f"≥{it.min_val}" if it.min_val is not None else "") +
+                          (f" ≤{it.max_val}" if it.max_val is not None else ""),
+                          "合格" if it.pass_flag == 1 else ("不合格" if it.pass_flag == 0 else "未判"),
+                          t.tested_by, t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""])
+    style(ws2, ["检验单号", "类型", "批次", "标准", "检验项目", "实测值", "单位", "标准要求", "判定", "检验员", "时间"],
+          rows2, [16, 10, 30, 26, 20, 12, 8, 14, 8, 10, 17])
+    # Sheet3 NCR
+    ws3 = wb.create_sheet("不合格NCR")
+    rows3 = []
+    for n in sorted(ncrs, key=lambda x: x.id):
+        no, mat = "", ""
+        if n.prod_id:
+            pl = db.get(M.ProductionLot, n.prod_id)
+            no = pl.lot_no if pl else ""
+            m = db.get(M.Material, pl.material_id) if pl and pl.material_id else None
+            mat = m.name if m else "中间料"
+        elif n.lot_id:
+            il = db.get(M.IncomingLot, n.lot_id)
+            no = il.lot_no if il else ""
+            m = db.get(M.Material, il.material_id) if il and il.material_id else None
+            mat = m.name if m else ""
+        rows3.append([n.ncr_no, no, mat, n.fail_summary, NCR_STATUS.get(n.status, ""),
+                      n.disposition, n.created_by,
+                      n.created_at.strftime("%Y-%m-%d %H:%M") if n.created_at else "", n.remark])
+    style(ws3, ["NCR号", "批次", "物料", "不合格描述", "状态", "处置", "发起", "时间", "备注"],
+          rows3, [14, 30, 16, 46, 12, 10, 10, 17, 24])
+    buf = io.BytesIO()
+    wb.save(buf)
+    fname = urllib.parse.quote(f"质量月报_{datetime.now().strftime('%Y%m%d')}.xlsx")
+    return Response(content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
+# ═══════════════════════ SPC 控制图（第5步）═══════════════════════
+def _numeric_series(db, check_type, indicator, object_type=None, object_id=None):
+    """取某检验类型+指标(+工序/物料维度)的历史实测值序列（时间正序，仅数值）"""
+    q = db.query(M.TestItem, M.TestRecord).join(
+        M.TestRecord, M.TestItem.test_id == M.TestRecord.id).filter(
+        M.TestRecord.check_type == check_type, M.TestItem.indicator == indicator)
+    if object_type == "station" and object_id:
+        q = q.join(M.ProductionLot, M.TestRecord.prod_id == M.ProductionLot.id) \
+             .filter(M.ProductionLot.station_id == object_id)
+    elif object_type == "material" and object_id:
+        q = q.join(M.IncomingLot, M.TestRecord.lot_id == M.IncomingLot.id) \
+             .filter(M.IncomingLot.material_id == object_id)
+    rows = q.order_by(M.TestRecord.id).all()
+    out = []
+    for it, tr in rows:
+        try:
+            v = float(str(it.actual).strip())
+        except (TypeError, ValueError):
+            continue
+        label = ""
+        if tr.prod_id:
+            pl = db.get(M.ProductionLot, tr.prod_id)
+            label = (pl.lot_no[-28:] if pl else str(tr.id))
+        else:
+            il = db.get(M.IncomingLot, tr.lot_id)
+            label = (il.lot_no if il else str(tr.id))
+        out.append({"value": v, "label": label, "test_no": tr.test_no,
+                    "lot_id": tr.lot_id, "prod_id": tr.prod_id,
+                    "min_val": it.min_val, "max_val": it.max_val,
+                    "date": tr.created_at.strftime("%m-%d") if tr.created_at else ""})
+    return out
+
+
+@app.get("/api/spc/items")
+def spc_items(token: str = Header(""), db: Session = Depends(get_db)):
+    """可做控制图的指标清单（数值型且样本≥6）"""
+    u = require_user(token, db)
+    require_page(u, "report")
+    sts = {st.id: st for st in db.query(M.Station).all()}
+    mats = {m.id: m for m in db.query(M.Material).all()}
+    prods = {p.id: p for p in db.query(M.ProductionLot).all()}
+    lots = {l.id: l for l in db.query(M.IncomingLot).all()}
+    rows = db.query(M.TestItem, M.TestRecord).join(
+        M.TestRecord, M.TestItem.test_id == M.TestRecord.id).all()
+    agg = {}
+    for it, tr in rows:
+        try:
+            float(str(it.actual).strip())
+        except (TypeError, ValueError):
+            continue
+        # 按 检验类型 + 指标 + 对象(工序/物料) 三维聚合，避免混工况
+        otype, oid, scope = None, None, "-"
+        if tr.prod_id and tr.prod_id in prods:
+            pl = prods[tr.prod_id]
+            otype, oid = "station", pl.station_id
+            scope = f"工序:{sts[pl.station_id].name}" if pl.station_id in sts else "-"
+        elif tr.lot_id and tr.lot_id in lots:
+            il = lots[tr.lot_id]
+            otype, oid = "material", il.material_id
+            scope = f"物料:{mats[il.material_id].name}" if il.material_id in mats else "-"
+        key = (tr.check_type, it.indicator, otype, oid)
+        agg.setdefault(key, []).append(tr)
+    out = []
+    for (ct, ind, otype, oid), trs in agg.items():
+        if len(trs) < 6:
+            continue
+        scopes = set()
+        for tr in trs:
+            if tr.prod_id and tr.prod_id in prods:
+                pl = prods[tr.prod_id]
+                if pl.station_id in sts:
+                    scopes.add(f"工序:{sts[pl.station_id].name}")
+            elif tr.lot_id and tr.lot_id in lots:
+                il = lots[tr.lot_id]
+                if il.material_id in mats:
+                    scopes.add(f"物料:{mats[il.material_id].name}")
+        out.append({"check_type": ct, "check_type_name": COA_CHECK_TYPES.get(ct, "来料检验"),
+                    "indicator": ind, "n": len(trs), "object_type": otype,
+                    "object_id": oid, "scope": "、".join(sorted(scopes)) or "-"})
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+@app.get("/api/spc/chart")
+def spc_chart(check_type: str, indicator: str, object_type: str = "", object_id: int = 0,
+              limit: int = 25, token: str = Header(""), db: Session = Depends(get_db)):
+    """I-MR 控制图：单值(X) + 移动极差(MR)，UCL/LCL=X̄±2.66·MR̄；越界点自动预警"""
+    u = require_user(token, db)
+    require_page(u, "report")
+    series = _numeric_series(db, check_type, indicator,
+                             object_type or None, object_id or None)
+    if len(series) < 6:
+        raise HTTPException(400, f"样本不足（{len(series)} 个数值点，至少需要 6 个）")
+    series = series[-limit:]
+    vals = [s["value"] for s in series]
+    xbar = sum(vals) / len(vals)
+    mrs = [abs(vals[i] - vals[i - 1]) for i in range(1, len(vals))]
+    mrbar = sum(mrs) / len(mrs) if mrs else 0
+    # 退化保护：所有值相同时 MR̄=0，控制限会塌缩成一条线导致全部误报。
+    # 此时改用样本标准差(±3σ)；若标准差也为 0（数据真的无波动）则明确提示不评估。
+    note = ""
+    if mrbar <= 1e-9:
+        var = sum((v - xbar) ** 2 for v in vals) / max(len(vals) - 1, 1)
+        sd = var ** 0.5
+        if sd <= 1e-9:
+            return {"check_type": check_type, "indicator": indicator,
+                    "center": round(xbar, 4), "ucl": None, "lcl": None,
+                    "mr_center": 0, "ucl_mr": None, "sigma_est": 0,
+                    "points": [{"idx": i, "value": v, "label": series[i]["label"],
+                                "date": series[i]["date"], "oc": False}
+                               for i, v in enumerate(vals)],
+                    "out_of_control": [], "spec": {"min_val": series[-1].get("min_val"),
+                                                   "max_val": series[-1].get("max_val")},
+                    "alarm": False,
+                    "note": "该指标历史实测值完全一致（无波动），暂无法评估控制限；请补充多样本后再看控制图"}
+        mrbar_eff = sd * 1.128
+    else:
+        mrbar_eff = mrbar
+    ucl = xbar + 2.66 * mrbar_eff
+    lcl = xbar - 2.66 * mrbar_eff
+    out_of_control = []
+    points = []
+    for i, s in enumerate(series):
+        oc = (s["value"] > ucl) or (s["value"] < lcl)
+        if oc:
+            out_of_control.append({"label": s["label"], "value": s["value"], "date": s["date"],
+                                   "side": "超上限" if s["value"] > ucl else "超下限"})
+        points.append({"idx": i, "value": s["value"], "label": s["label"],
+                       "date": s["date"], "diff": i == 0 or abs(s["value"] - series[i-1]["value"]) > 0,
+                       "oc": oc})
+    spec = {"min_val": series[-1].get("min_val"), "max_val": series[-1].get("max_val")}
+    return {"check_type": check_type, "indicator": indicator, "note": note,
+            "center": round(xbar, 3), "ucl": round(ucl, 3), "lcl": round(lcl, 3),
+            "mr_center": round(mrbar, 3), "ucl_mr": round(3.267 * mrbar, 3),
+            "sigma_est": round(mrbar_eff / 1.128, 3),
+            "points": points, "out_of_control": out_of_control, "spec": spec,
+            "alarm": len(out_of_control) > 0}
+
+
+# ═══════════════════════ 车间大屏（第5步）═══════════════════════
+@app.get("/api/screen")
+def screen_data(token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "screen")
+    now = datetime.now()
+    today0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_trs = db.query(M.TestRecord).filter(M.TestRecord.created_at >= today0).all()
+    today_pass = len([t for t in today_trs if t.result == 1])
+    today_fail = len([t for t in today_trs if t.result == 2])
+    since = now - timedelta(days=30)
+    trs30 = db.query(M.TestRecord).filter(M.TestRecord.created_at >= since).all()
+    sts = {st.id: st for st in db.query(M.Station).all()}
+    # 各工序合格率（近30天 ipqc）
+    line = {}
+    for t in trs30:
+        if t.check_type != "ipqc" or t.result not in (1, 2) or not t.prod_id:
+            continue
+        pl = db.get(M.ProductionLot, t.prod_id)
+        if not pl:
+            continue
+        nm = sts[pl.station_id].name if pl.station_id in sts else "?"
+        e = line.setdefault(nm, [0, 0])
+        e[0] += 1
+        if t.result == 1:
+            e[1] += 1
+    lines = [{"station": k, "tests": v[0],
+              "rate": round(v[1] * 100.0 / v[0], 0) if v[0] else None}
+             for k, v in sorted(line.items(), key=lambda x: -x[1][0])]
+    # 待办
+    todo = {
+        "iqc_wait": db.query(M.IncomingLot).filter(M.IncomingLot.status.in_([0, 1])).count(),
+        "prod_wait": db.query(M.ProductionLot).filter(M.ProductionLot.status == 1).count(),
+        "oqc_wait": db.query(M.ProductionLot).filter(M.ProductionLot.status == 4).count(),
+        "ncr_open": db.query(M.Ncr).filter(M.Ncr.status == 0).count(),
+        "frozen": db.query(M.ProductionLot).filter(M.ProductionLot.status.in_([3, 6])).count(),
+    }
+    # 最近事件
+    events = []
+    for t in db.query(M.TestRecord).order_by(M.TestRecord.id.desc()).limit(12).all():
+        obj, mat = "", ""
+        if t.prod_id:
+            pl = db.get(M.ProductionLot, t.prod_id)
+            obj = pl.lot_no if pl else ""
+            m = db.get(M.Material, pl.material_id) if pl and pl.material_id else None
+            mat = m.name if m else ""
+        elif t.lot_id:
+            il = db.get(M.IncomingLot, t.lot_id)
+            obj = il.lot_no if il else ""
+            m = db.get(M.Material, il.material_id) if il and il.material_id else None
+            mat = m.name if m else ""
+        events.append({"time": t.created_at.strftime("%m-%d %H:%M") if t.created_at else "",
+                       "test_no": t.test_no,
+                       "type": COA_CHECK_TYPES.get(t.check_type, "来料检验"),
+                       "lot_no": obj, "material": mat, "result": t.result,
+                       "by": t.tested_by})
+    return {"updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "kpi": {"today_tests": len(today_trs), "today_pass": today_pass,
+                    "today_fail": today_fail,
+                    "today_rate": round(today_pass * 100.0 / (today_pass + today_fail), 0)
+                    if (today_pass + today_fail) else None,
+                    "fg_ok": db.query(M.ProductionLot).filter(M.ProductionLot.status == 5).count(),
+                    "coa": db.query(M.Coa).count()},
+            "todo": todo, "lines": lines, "events": events,
+            "rates": {"iqc": _rate_of(trs30, "iqc")["rate"],
+                      "ipqc": _rate_of(trs30, "ipqc")["rate"],
+                      "oqc": _rate_of(trs30, "oqc")["rate"]}}
+
 
 # ── 建批：本工序可选的父批（首工序列合格原料批；其余列上工序合格生产批）──
 @app.get("/api/production-lots/available-parents")

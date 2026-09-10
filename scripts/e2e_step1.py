@@ -2,8 +2,11 @@
 """第1步 e2e 验收：登录权限 / 基础资料 CRUD / Excel 导入 / 账号停用拦截
 运行: python scripts/e2e_step1.py
 """
-import csv, io, json, os, sys, urllib.request, urllib.parse
+import csv, io, json, os, sys, time, urllib.request, urllib.parse
 
+TS = str(int(time.time()) % 100000)   # 每次运行唯一，保证脚本可重复运行
+UCODE = 'RAW-' + TS
+UNAME = 'testuser' + TS
 BASE = "http://localhost:8000"
 
 
@@ -47,9 +50,10 @@ check("错误密码被拒", bad.get("_err") == 401)
 def keys(d):
     return sorted([m["key"] for m in d.get("menus", [])])
 
-check("admin 可见全部13页", keys(admin) == sorted(
-    ["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
-check("qc(检验员) 只可见7页且无账号管理", keys(qc) == sorted(["dashboard", "prodlot", "qcstandard", "incoming", "ncr", "material", "equipment"]), str(keys(qc)))
+check("admin 可见全部16页", keys(admin) == sorted(
+    ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
+check("qc(检验员) 可见10页且无账号管理", keys(qc) == sorted(
+    ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "equipment"]), str(keys(qc)))
 check("store(仓储) 无供应商管理", "supplier" not in keys(store), str(keys(store)))
 check("buyer(采购) 可管理 supplier", any(m["key"] == "supplier" and m["manage"] for m in buyer.get("menus", [])))
 check("qm(质量经理) 可管理 material", any(m["key"] == "material" and m["manage"] for m in qm.get("menus", [])))
@@ -80,18 +84,18 @@ check("工序带车间名(JOIN 正常)", st and st[0].get("workshop_name"))
 check("设备带工序名+车间名(JOIN 正常)", eq and eq[0].get("station_name") and eq[0].get("workshop_name"))
 
 # 新增-编辑-停用（物料）
-add = call("POST", "/api/material", {"code": "RAW-005", "name": "测试原料", "material_type": "原料",
+add = call("POST", "/api/material", {"code": UCODE, "name": "测试原料", "material_type": "原料",
                                      "spec": "测试规格", "unit": "t"}, token=AT)
 check("新增物料成功", add.get("ok") is True, str(add))
 dup = call("POST", "/api/material", {"code": "RAW-001", "name": "重复编码"}, token=AT)
 check("重复编码被拒 400", dup.get("_err") == 400)
 mid = add.get("id")
-upd = call("PUT", f"/api/material/{mid}", {"code": "RAW-005", "name": "测试原料改名"}, token=AT)
+upd = call("PUT", f"/api/material/{mid}", {"code": UCODE, "name": "测试原料改名"}, token=AT)
 check("编辑物料成功", upd.get("ok") is True)
 del_ = call("DELETE", f"/api/material/{mid}", token=AT)
 check("停用物料成功(软删)", del_.get("ok") is True)
 mats2 = call("GET", "/api/material", token=AT)
-check("停用后列表不含该物料", len(mats2) == 9)
+check("停用后列表不含该物料", all(m["code"] != UCODE for m in mats2))
 
 # 关键字搜索
 sr = call("GET", "/api/material?" + urllib.parse.urlencode({"keyword": "磷酸"}), token=AT)
@@ -103,7 +107,7 @@ buf = io.StringIO()
 w = csv.writer(buf)
 w.writerow(["编码", "名称", "类型(原料/辅料/中间品/成品)", "规格", "单位", "备注"])
 for i in range(1, 31):
-    w.writerow([f"RAW-1{i:03d}" if i < 100 else f"RAW-{i:03d}", f"批量原料{i}", "原料", "含量≥98%", "t", "导入测试"])
+    w.writerow([f"IMP{TS}-{i:03d}", f"批量原料{i}", "原料", "含量≥98%", "t", "导入测试"])
 # 留一个错误行：缺编码
 w.writerow(["", "缺编码原料", "原料", "", "t", ""])
 csv_text = buf.getvalue().encode("utf-8-sig")
@@ -123,7 +127,7 @@ with urllib.request.urlopen(req) as r:
 check("导入30行成功+1行缺编码报错", imp.get("inserted") == 30 and imp.get("error_count") == 1,
       json.dumps(imp, ensure_ascii=False)[:150])
 mats3 = call("GET", "/api/material", token=AT)
-check("导入后物料共39条", len(mats3) == 39, f"实际 {len(mats3)}")
+check("导入后物料数=基准+30", len(mats3) == len(mats2) + 30, f"{len(mats3)} vs 基准{len(mats2)}+30")
 
 # 模板下载
 req = urllib.request.Request(BASE + "/api/templates/material.csv")
@@ -134,24 +138,24 @@ check("模板下载含表头", "编码" in tpl and "名称" in tpl)
 
 # ═══ 4. 账号管理 + 停用拦截 ═══
 print("══ 4. 账号管理 ══")
-newu = call("POST", "/api/admin/users", {"username": "testuser1", "real_name": "测试员",
+newu = call("POST", "/api/admin/users", {"username": UNAME, "real_name": "测试员",
                                          "department": "质量部", "role_key": "qc",
                                          "station_id": st[0]["id"], "password": "123456"}, token=AT)
 check("新建账号成功", newu.get("ok") is True)
-login_new = call("POST", "/api/auth/login", {"username": "testuser1", "password": "123456"})
+login_new = call("POST", "/api/auth/login", {"username": UNAME, "password": "123456"})
 check("新账号可登录", "token" in login_new)
 dis = call("PUT", "/api/admin/users/" + str(login_new["user"]["id"]), {"enabled": False}, token=AT)
 check("停用账号成功", dis.get("ok") is True)
-login_dis = call("POST", "/api/auth/login", {"username": "testuser1", "password": "123456"})
+login_dis = call("POST", "/api/auth/login", {"username": UNAME, "password": "123456"})
 check("停用后登录被拒 403", login_dis.get("_err") == 403, str(login_dis))
 pwd = call("PUT", f"/api/admin/users/{login_new['user']['id']}/password", {"password": "abc12345"}, token=AT)
 check("重置密码成功", pwd.get("ok") is True)
-login_pwd = call("POST", "/api/auth/login", {"username": "testuser1", "password": "abc12345"})
+login_pwd = call("POST", "/api/auth/login", {"username": UNAME, "password": "abc12345"})
 check("新密码可登录(但已停用→403, 说明停用优先)", login_pwd.get("_err") == 403)
 
 # 总览
 ov = call("GET", "/api/overview", token=AT)
-check("总览计数正常", ov.get("material") == 39 and ov.get("station") == 10)
+check("总览计数正常", ov.get("material") == len(mats3) and ov.get("station") == 10)
 
 print()
 print(f"════ 结果: {len(PASS)} 通过 / {len(FAIL)} 失败 ════")

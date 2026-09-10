@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """第1步：建库 + 全套演示数据（物料用用户提供的真实清单）"""
 import hashlib, json, os, re, secrets, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -472,6 +472,219 @@ def seed_production(db):
     print(f"✔ 生产批次演示数据: 主链6批(原料→包装成品)+OQC标准2套+COA1张+待检1批+不合格冻结1批(含NCR)")
 
 
+
+def seed_history(db):
+    """第5步演示：近30天历史检验数据（供报表/SPC/大屏）
+    - 8 条完整生产链(每条 5 工序)，其中 2 条在中途工序不合格 → 冻结 + NCR
+    - 同一工序同一指标 ≥6 个数值点；并故意造 2 个"超控制限(仍在标准内)"的失控点
+    - 幂等：以 remark='HIST' 标记是否存在
+    注意：随机数用固定种子，保证结果可复现。"""
+    import random
+    rnd = random.Random(20260910)
+    db.flush()
+    if db.query(ProductionLot).filter(ProductionLot.remark == "HIST").count() > 0:
+        return
+    sts = {st.code: st for st in db.query(Station).all()}
+    eqs = {}
+    for e in db.query(Equipment).all():
+        eqs.setdefault(e.station_id, []).append(e)
+    teams = db.query(Team).all()
+    mats = {m.code: m for m in db.query(Material).all()}
+    sups = {sp.code: sp for sp in db.query(Supplier).all()}
+    now = datetime.now()
+    tseq = [300]
+
+    def next_test_no():
+        tseq[0] += 1
+        return f"T-{now.strftime('%Y%m%d')}-{tseq[0]:03d}"
+
+    def std_of(otype, oid, ctype):
+        return db.query(QcStandard).filter(QcStandard.object_type == otype,
+                                          QcStandard.object_id == oid,
+                                          QcStandard.check_type == ctype).first()
+
+    def items_of(std):
+        return db.query(QcStandardItem).filter(QcStandardItem.standard_id == std.id,
+                                              QcStandardItem.enabled == 1) \
+            .order_by(QcStandardItem.seq).all()
+
+    def value_for(it, mode="normal"):
+        """按标准生成实测值；mode: normal=正常波动, bad=不合格, drift=超控制限(仍在标准内)"""
+        lo, hi = it.min_val, it.max_val
+        if lo is None and hi is None:
+            return "合格"
+        if lo is not None and hi is not None:
+            span = hi - lo
+            if mode == "bad":
+                return str(round(lo - span * 0.15, 3))
+            if mode == "drift":
+                # 冲到规格上限（仍然合格），因正常波动仅 ±1% 量程 → 该点必然超出控制限
+                return str(round(hi - span * 0.005, 3))
+            return str(round(lo + span * (0.49 + rnd.random() * 0.02), 3))
+        if lo is not None:                                     # 只有下限
+            if mode == "bad":
+                return str(round(lo - abs(lo) * 0.05 - 0.2, 2))
+            if mode == "drift":
+                return str(round(lo + abs(lo) * 0.12, 3))
+            return str(round(lo + abs(lo) * (0.02 + rnd.random() * 0.008), 3))
+        if mode == "bad":                                      # 只有上限
+            return str(round(hi + abs(hi) * 0.1 + 0.1, 2))
+        if mode == "drift":
+            return str(round(hi * 0.995, 3))
+        return str(round(hi * (0.5 + rnd.random() * 0.02), 3))
+
+    def make_test(prod_id, std, by, mode="normal", day_offset=0, hour=10):
+        tr = TestRecord(test_no=next_test_no(), prod_id=prod_id, std_id=std.id,
+                        check_type=std.check_type, result=0, tested_by=by,
+                        created_at=now - timedelta(days=day_offset, hours=rnd.randint(0, 6)))
+        db.add(tr)
+        db.flush()
+        fail = 0
+        for i, it in enumerate(items_of(std), start=1):
+            m = mode if (mode == "bad" and i == 1) else ("drift" if (mode == "drift" and i == 1) else "normal")
+            v = value_for(it, m)
+            passed = 1
+            if it.min_val is not None or it.max_val is not None:
+                try:
+                    n = float(v)
+                    passed = 1 if ((it.min_val is None or n >= it.min_val) and
+                                   (it.max_val is None or n <= it.max_val)) else 0
+                except ValueError:
+                    passed = 1
+            elif not v:
+                passed = 0
+            if not passed:
+                fail += 1
+            db.add(TestItem(test_id=tr.id, seq=i, indicator=it.indicator, unit=it.unit,
+                            min_val=it.min_val, max_val=it.max_val, method=it.method,
+                            is_key=it.is_key, actual=v, pass_flag=passed))
+        tr.result = 2 if fail else 1
+        db.flush()
+        return tr
+
+    def make_test_in(dbi, lot_id, std, by, mode, day_offset):
+        tr = TestRecord(test_no=next_test_no(), lot_id=lot_id, std_id=std.id,
+                        check_type="iqc", result=0, tested_by=by,
+                        created_at=now - timedelta(days=day_offset, hours=rnd.randint(0, 6)))
+        dbi.add(tr)
+        dbi.flush()
+        fail = 0
+        for i, it in enumerate(items_of(std), start=1):
+            m = mode if (mode == "bad" and i == 1) else "normal"
+            v = value_for(it, m)
+            passed = 1
+            if it.min_val is not None or it.max_val is not None:
+                try:
+                    n = float(v)
+                    passed = 1 if ((it.min_val is None or n >= it.min_val) and
+                                   (it.max_val is None or n <= it.max_val)) else 0
+                except ValueError:
+                    passed = 1
+            if not passed:
+                fail += 1
+            dbi.add(TestItem(test_id=tr.id, seq=i, indicator=it.indicator, unit=it.unit,
+                             min_val=it.min_val, max_val=it.max_val, method=it.method,
+                             is_key=it.is_key, actual=v, pass_flag=passed))
+        tr.result = 2 if fail else 1
+        dbi.flush()
+        return tr
+
+    # ── 原料批：8 个合格 + 1 个不合格（供 IQC 合格率与柏拉图）──
+    raw_defs = [("RAW-001", "SUP-001"), ("RAW-002", "SUP-002"), ("RAW-003", "SUP-002"),
+                ("RAW-004", "SUP-003"), ("RAW-001", "SUP-001"), ("AUX-001", "SUP-004"),
+                ("RAW-002", "SUP-002"), ("RAW-003", "SUP-002"), ("RAW-001", "SUP-001")]
+    raw_lots = []
+    for k, (mc, sc) in enumerate(raw_defs, start=1):
+        d = now - timedelta(days=28 - k * 3)
+        bad = (k == 9)      # 最后一批故意不合格
+        sup = sups[sc]
+        digits = "".join(ch for ch in sup.code if ch.isdigit())[-2:].zfill(2)
+        lot = IncomingLot(lot_no=f"{d.strftime('%Y%m%d')}-RA-SUP{digits}-{k:03d}",
+                          material_id=mats[mc].id, supplier_id=sup.id,
+                          supplier_lot=f"HIS-{k:04d}", qty=round(20 + rnd.random() * 15, 1),
+                          unit="t", vehicle="鄂A" + str(10000 + k), status=1,
+                          arrival_by="buyer", created_at=d, updated_at=d)
+        db.add(lot)
+        db.flush()
+        std = db.query(QcStandard).filter(QcStandard.object_type == "material",
+                                         QcStandard.object_id == mats[mc].id,
+                                         QcStandard.check_type == "iqc").first()
+        if std:
+            tr = make_test_in(db, lot.id, std, "qc", "bad" if bad else "normal", 28 - k * 3)
+            lot.status = 3 if bad else 2
+            if bad:
+                it0 = db.query(TestItem).filter(TestItem.test_id == tr.id,
+                                                TestItem.pass_flag == 0).first()
+                db.add(Ncr(ncr_no=f"NCR-{now.year}-H{k:03d}", lot_id=lot.id, test_id=tr.id,
+                           fail_summary=f"{it0.indicator} 实测{it0.actual}（超标准）" if it0 else "不合格",
+                           status=0 if k == 9 else 1, created_by="qc", created_at=d))
+        db.flush()
+        raw_lots.append(lot)
+
+
+    # ── 8 条生产链（每条 5 工序）；第 4、7 条中途不合格 ──
+    chain_codes = ["ST01", "ST03", "ST05", "ST06", "ST08"]
+    n_coa = 0
+    for c in range(1, 9):
+        day0 = 26 - c * 3
+        parent_no = raw_lots[(c - 1) % 8].lot_no
+        broken = c in (4, 7)
+        for si, code in enumerate(chain_codes):
+            st = sts[code]
+            eq = eqs[st.id][c % len(eqs[st.id])]
+            team = teams[c % len(teams)]
+            d = now - timedelta(days=max(day0 - si, 0))
+            digits = "".join(ch for ch in eq.code if ch.isdigit())[-2:].zfill(2)
+            lot_no = f"{d.strftime('%Y%m%d')}-ST{code[-2:]}-EQ{digits}-{c:03d}-[HIS]-{team.name[0]}"
+            is_fg = code == "ST08"
+            pl = ProductionLot(lot_no=lot_no, station_id=st.id, equipment_id=eq.id,
+                               team_id=team.id,
+                               material_id=mats["FG-001"].id if is_fg else None,
+                               parent_type="incoming" if si == 0 else "production",
+                               parent_lot_no=parent_no, qty=round(18 + rnd.random() * 8, 1),
+                               unit="t", status=1, operator="prodlead",
+                               remark="HIST", created_at=d, updated_at=d)
+            db.add(pl)
+            db.flush()
+            # 过程检验：broken 链在第 2 道工序(ST03)不合格
+            bad_here = broken and si == 1
+            # SPC 失控点：仅在 c==1 这条链的 ST01/ST03/ST05 各造 1 个"超控制限但仍在标准内"的点
+            # （同一指标只放 1 个异常点，否则多个异常点会把控制限抬宽而落在限内）
+            drift_here = (c == 1) and (si in (0, 1, 2))
+            std = std_of("station", st.id, "ipqc")
+            if std:
+                make_test(pl.id, std, "qc" if si % 2 == 0 else "qc2",
+                          "bad" if bad_here else ("drift" if drift_here else "normal"),
+                          max(day0 - si, 0))
+            if bad_here:
+                pl.status = 3
+                it0 = db.query(TestItem).join(TestRecord, TestItem.test_id == TestRecord.id) \
+                    .filter(TestRecord.prod_id == pl.id, TestItem.pass_flag == 0).first()
+                db.add(Ncr(ncr_no=f"NCR-{now.year}-H1{c:02d}",
+                           prod_id=pl.id, test_id=None,
+                           fail_summary=f"{it0.indicator} 实测{it0.actual}（超标准）" if it0 else "过程不合格",
+                           status=0, created_by="qc", created_at=d))
+                break                                       # 链在此中断
+            if is_fg:
+                # 成品 OQC 合格 → COA
+                oq = std_of("material", mats["FG-001"].id, "oqc")
+                tr_o = make_test(pl.id, oq, "qc2", "normal", max(day0 - si, 0))
+                pl.status = 5
+                snap = [{"indicator": ti.indicator, "actual": ti.actual, "unit": ti.unit,
+                         "min_val": ti.min_val, "max_val": ti.max_val, "pass": ti.pass_flag}
+                        for ti in db.query(TestItem).filter(TestItem.test_id == tr_o.id)
+                           .order_by(TestItem.seq).all()]
+                n_coa += 1
+                db.add(Coa(coa_no=f"COA-{d.strftime('%Y%m%d')}-H{n_coa:02d}", prod_id=pl.id,
+                           test_id=tr_o.id, items_json=json.dumps(snap, ensure_ascii=False),
+                           result=1, issued_by="qm", created_at=d))
+            else:
+                pl.status = 2
+            parent_no = lot_no
+    db.commit()
+    print(f"✔ 历史数据: 来料9批(含1不合格) + 生产链8条({sum(1 for p in db.query(ProductionLot).filter(ProductionLot.remark=='HIST') if p.status==5)}条到成品) + COA{n_coa}张 + SPC含失控点")
+
+
 def seed():
     ensure_schema()
     db = SessionLocal()
@@ -482,6 +695,7 @@ def seed():
             seed_user_stations(db)
             seed_incoming(db)
             seed_production(db)
+            seed_history(db)
             print("DB 已有基础数据，完成增量补种")
             return
 
@@ -605,6 +819,8 @@ def seed():
         seed_incoming(db)
         # ═══ 第4步：生产批次/成品检验演示数据 ═══
         seed_production(db)
+        # ═══ 第5步：历史数据(报表/SPC/大屏) ═══
+        seed_history(db)
     finally:
         db.close()
 

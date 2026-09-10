@@ -107,6 +107,23 @@ tr:hover td{background:#f7fbfe}
 .perm-sec .ps-title{font-size:12.5px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
 .perm-sec .ps-desc{font-size:11.5px;color:var(--text-sub);font-weight:400;margin-left:auto}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cfe0f2;border-radius:4px}
+
+/* 车间大屏（深色） */
+.sc-wrap{background:#0b1c2c;border-radius:12px;padding:16px 18px;color:#e6f1fa;min-height:70vh}
+.sc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid #1d3b57;padding-bottom:10px}
+.sc-title{font-size:20px;font-weight:700;color:#eaf4ff;letter-spacing:1px}
+.sc-time{font-size:12.5px;color:#7f9ab3}
+.sc-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.sc-card{background:linear-gradient(160deg,#12324d,#0e2740);border:1px solid #1d3b57;border-radius:10px;padding:12px 14px}
+.sc-lb{font-size:12.5px;color:#9fb3c8}
+.sc-v{font-size:26px;font-weight:700;margin-top:6px}
+.sc-row2{display:grid;grid-template-columns:1fr 1.4fr;gap:12px;margin-top:12px}
+@media(max-width:900px){.sc-row2{grid-template-columns:1fr}}
+.sc-panel{background:#0e2740;border:1px solid #1d3b57;border-radius:10px;padding:12px 14px}
+.sc-ph{font-size:13.5px;font-weight:600;color:#bfe0ff;margin-bottom:8px}
+.sc-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.sc-tbl th{color:#8fb0cc;text-align:left;padding:6px 8px;border-bottom:1px solid #1d3b57;font-weight:600}
+.sc-tbl td{padding:6px 8px;border-bottom:1px solid #15304a;color:#d7e6f4}
 </style>
 </head>
 <body>
@@ -235,6 +252,9 @@ function openPage(key){
     qcstandard:()=>renderStdPage(),
     incoming:()=>renderIncomingPage(),
     prodlot:()=>renderProdlotPage(),
+    trace:()=>renderTracePage(),
+    report:()=>renderReportPage(),
+    screen:()=>renderScreenPage(),
     ncr:()=>renderNcrPage(),
     material:()=>renderEntityPage('material'),
     supplier:()=>renderEntityPage('supplier'),
@@ -1424,6 +1444,295 @@ async function showCoaByNo(coaNo){
   const rows=await api('/api/coas');
   const r=rows.find(x=>x.coa_no===coaNo);
   if(r)showCoa(r.id);else toast('未找到该 COA');
+}
+
+
+/* ═══════════ 批次追溯（第5步）═══════════ */
+async function renderTracePage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='🔍 批次追溯';
+  c.appendChild(ttl);
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='输入任意批号（成品批号 / 生产批号 / 来料批号），一键还原完整来龙去脉：原料 → 各工序（设备/班组/操作人）→ 检验数据 → 成品 COA；链上不合格处红字标源。';
+  c.appendChild(desc);
+  const bar=document.createElement('div');bar.className='panel';
+  bar.innerHTML='<div class="searchbar">'
+    +'<input id="trace-kw" placeholder="粘贴批号，如 20260910-ST08-EQ13-008-[HIS]-丙 或 20260910-RA-SUP01-001" style="flex:1;min-width:340px" onkeydown="if(event.key===\'Enter\')doTrace()">'
+    +'<button class="btn btn-p" onclick="doTrace()">🔍 追溯</button>'
+    +'<span style="font-size:12px;color:var(--text-sub)">💡 成品批号可在「生产批次」「成品报告」页复制</span></div>';
+  c.appendChild(bar);
+  const box=document.createElement('div');box.id='trace-box';
+  c.appendChild(box);
+  doTrace(true);
+}
+async function doTrace(silent){
+  const box=document.getElementById('trace-box');
+  const kw=document.getElementById('trace-kw').value.trim();
+  if(!kw){ if(!silent) box.innerHTML='<div class="panel" style="text-align:center;color:var(--text-sub)">请输入批号</div>'; return }
+  let d;
+  try{d=await api('/api/trace?lot_no='+encodeURIComponent(kw))}
+  catch(e){box.innerHTML='<div class="panel"><div class="alertbar alert-bad">✘ '+esc(e.message)+'</div></div>';return}
+  const sum=d.summary;
+  let html='<div class="panel" style="padding:12px 16px"><div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">'
+    +'<span style="font-size:14px;font-weight:600">批号 '+esc(d.lot_no)+'</span>'
+    +'<span class="tag tag-blue">链路 '+sum.hops+' 级</span>'
+    +'<span class="tag tag-gray">检验单 '+sum.tests+' 张</span>'
+    +(sum.coa_no?'<span class="tag tag-green">'+esc(sum.coa_no)+'</span>':'')
+    +(sum.has_problem?'<span class="tag tag-red">⚠ 链上发现不合格</span>':'<span class="tag tag-green">✔ 全程无不合格</span>')
+    +'</div></div>';
+  if(d.problems.length){
+    html+='<div class="panel" style="border-left:4px solid var(--bad)"><div style="font-weight:600;color:var(--bad);margin-bottom:6px">⚠ 问题源头</div>'
+      +d.problems.map(pb=>'<div style="font-size:13px;color:var(--bad)">· <b>'+esc(pb.lot_no)+'</b>（'+esc(pb.station_name)+'）：'+esc(pb.reason)+'</div>').join('')+'</div>';
+  }
+  html+='<div id="trace-chain"></div>';
+  box.innerHTML=html;
+  // 纵向时间线：从成品往上
+  const nodes=d.chain.map((n,i)=>{
+    const isRaw=n.kind==='incoming';
+    const bad=[3,6].includes(n.status);
+    const border=bad?'var(--bad)':(i===0?'var(--primary)':'#dfe8f3');
+    let tests='';
+    n.tests.forEach(t=>{
+      const rows=t.items.map(it=>{
+        let lim='';if(it.min_val!=null)lim+='≥'+it.min_val;if(it.max_val!=null)lim+=(lim?'/':'')+'≤'+it.max_val;
+        return '<tr><td>'+esc(it.indicator)+'</td><td>'+(lim||'—')+'</td><td><b>'+esc(it.actual)+'</b> '+esc(it.unit||'')+'</td>'
+          +'<td style="color:'+(it.pass===1?'var(--ok)':'var(--bad)')+';font-weight:600">'+(it.pass===1?'合格':(it.pass===0?'不合格':'未判'))+'</td></tr>';
+      }).join('');
+      tests+='<div style="margin-top:8px"><div style="font-size:12.5px;margin-bottom:4px">'
+        +'<span class="tag '+(t.result===1?'tag-green':'tag-red')+'">'+esc(t.check_type_name)+'</span> '
+        +'<b>'+esc(t.test_no)+'</b> <span style="color:var(--text-sub)">'+esc(t.std_name)+' · '+esc(t.tested_by)+' · '+esc(t.created_at)+'</span></div>'
+        +'<div class="tbl-wrap"><table><thead><tr><th>项目</th><th>标准</th><th>实测</th><th>判定</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    });
+    const ncrs=n.ncr&&n.ncr.length?'<div style="margin-top:8px;font-size:12.5px;color:var(--bad)">'
+      +n.ncr.map(x=>'⚠ '+esc(x.ncr_no)+'（'+esc(x.status_name)+'）：'+esc(x.fail_summary)).join('<br>')+'</div>':'';
+    const coa=n.coa_no?'<div style="margin-top:8px"><a class="btn btn-o btn-sm" href="/coa/'+esc(n.coa_no)+'" target="_blank">📄 查看 COA '+esc(n.coa_no)+'</a></div>':'';
+    const meta=isRaw
+      ? '<b>'+esc(n.material_name)+'</b> ｜ 供应商 '+esc(n.supplier_name)+'（批号 '+esc(n.supplier_lot||'—')+'）｜ '+n.qty+' '+esc(n.unit)+' ｜ 到货 '+esc(n.created_at)+' ｜ 登记 '+esc(n.arrival_by)
+      : '<b>'+esc(n.station_code+' '+n.station_name)+'</b>（'+esc(n.equipment_name||'—')+'）｜ 班组 '+esc(n.team_name||'—')+' ｜ 操作 '+esc(n.operator)+' ｜ 产出 '+esc(n.material_name)+' ｜ '+n.qty+' '+esc(n.unit)+' ｜ '+esc(n.created_at);
+    return '<div class="panel" style="border-left:4px solid '+border+';margin-left:'+(i*14)+'px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'
+      +'<div style="font-size:13.5px">'+(isRaw?'🚚 <b>原料</b>':'🏭 第 '+(d.chain.length-i)+' 道')+' <span class="tag tag-blue" style="font-size:11px">'+esc(n.lot_no)+'</span></div>'
+      +'<span class="tag tag-'+(bad?'red':([2,5].includes(n.status)?'green':'warn'))+'">'+esc(n.status_name)+'</span></div>'
+      +'<div style="font-size:12.5px;color:var(--text-sub);margin-top:6px">'+meta+'</div>'
+      +tests+ncrs+coa+'</div>';
+  }).join('');
+  document.getElementById('trace-chain').innerHTML=nodes;
+}
+
+/* ═══════════ 统计报表（第5步）═══════════ */
+async function renderReportPage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='📈 统计报表';
+  c.appendChild(ttl);
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='合格率、不合格柏拉图、检验趋势、SPC 控制图（超控制限自动预警）。数字与明细同源，可导出 Excel 月报。';
+  c.appendChild(desc);
+  const bar=document.createElement('div');bar.className='panel';
+  bar.innerHTML='<div class="searchbar">'
+    +'<select id="rp-days" onchange="loadReport()" style="min-width:120px">'
+    +'<option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option></select>'
+    +'<button class="btn btn-o" onclick="loadReport()">🔄 刷新</button>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn btn-p" onclick="exportReport()">⬇ 导出 Excel 月报</button></div>';
+  c.appendChild(bar);
+  const box=document.createElement('div');box.id='rp-box';c.appendChild(box);
+  loadReport();
+}
+async function exportReport(){
+  const days=document.getElementById('rp-days').value;
+  toast('正在生成 Excel…');
+  const resp=await fetch('/api/reports/export?days='+days,{headers:{token:TOKEN}});
+  if(!resp.ok){toast('✘ 导出失败');return}
+  const blob=await resp.blob();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='质量月报_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'.xlsx';
+  a.click();
+  toast('✔ 已导出 Excel');
+}
+function kpiCard(label,val,sub,color){
+  return '<div class="panel" style="flex:1;min-width:150px;text-align:center;padding:14px 10px">'
+    +'<div style="font-size:12.5px;color:var(--text-sub)">'+esc(label)+'</div>'
+    +'<div style="font-size:26px;font-weight:700;color:'+(color||'var(--text)')+';margin:4px 0">'+(val==null?'—':val)+'</div>'
+    +'<div style="font-size:11.5px;color:var(--text-sub)">'+esc(sub||'')+'</div></div>';
+}
+async function loadReport(){
+  const days=document.getElementById('rp-days').value;
+  const d=await api('/api/reports/summary?days='+days);
+  const rate=v=>v==null?'—':v+'%';
+  let html='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    +kpiCard('来料检验合格率(IQC)',rate(d.iqc.rate),`${d.iqc.total} 单 / 不合格 ${d.iqc.fail}`,d.iqc.rate!=null&&d.iqc.rate<90?'var(--bad)':'var(--ok)')
+    +kpiCard('过程检验合格率(IPQC)',rate(d.ipqc.rate),`${d.ipqc.total} 单 / 不合格 ${d.ipqc.fail}`,d.ipqc.rate!=null&&d.ipqc.rate<90?'var(--warn)':'var(--ok)')
+    +kpiCard('成品检验合格率(OQC)',rate(d.oqc.rate),`${d.oqc.total} 单`,d.oqc.rate==null?'':(d.oqc.rate<100?'var(--warn)':'var(--ok)'))
+    +kpiCard('不合格单(NCR)',d.ncr.total,'待处理 '+d.ncr.pending,d.ncr.pending?'var(--bad)':'var(--ok)')
+    +kpiCard('生产批次',d.lots.production,'冻结 '+d.lots.frozen+' / 成品合格 '+d.lots.fg_ok,'')
+    +kpiCard('COA 报告',d.lots.coa,'已放行成品','')
+    +'</div>';
+  html+='<div style="display:flex;gap:10px;flex-wrap:wrap">'
+    +'<div class="panel" style="flex:1.2;min-width:360px"><div style="font-weight:600;margin-bottom:8px">📊 不合格柏拉图（按指标）</div>'+(d.pareto.length?svgPareto(d.pareto):'<div style="color:var(--text-sub);font-size:13px;padding:20px;text-align:center">区间内无不合格记录 🎉</div>')+'</div>'
+    +'<div class="panel" style="flex:1.4;min-width:380px"><div style="font-weight:600;margin-bottom:8px">📈 检验趋势（合格单数/日）</div>'+(d.trend.length?svgTrend(d.trend):'<div style="color:var(--text-sub);font-size:13px;padding:20px;text-align:center">暂无数据</div>')+'</div>'
+    +'</div>';
+  html+='<div class="panel" style="margin-top:10px"><div style="font-weight:600;margin-bottom:8px">📉 SPC 控制图（单值 I-MR，超控制限自动预警）</div>'
+    +'<div class="searchbar" style="margin-bottom:10px"><select id="spc-sel" style="min-width:360px"></select>'
+    +'<button class="btn btn-p btn-sm" onclick="loadSpc()">查看控制图</button>'
+    +'<span style="font-size:12px;color:var(--text-sub)" id="spc-alarm"></span></div>'
+    +'<div id="spc-box"></div></div>';
+  document.getElementById('rp-box').innerHTML=html;
+  // SPC 指标下拉
+  const items=await api('/api/spc/items');
+  window.__spcItems=items;
+  const sel=document.getElementById('spc-sel');
+  if(items.length){
+    sel.innerHTML=items.map((it,i)=>'<option value="'+i+'">'+esc(it.check_type_name+' · '+it.scope+' · '+it.indicator+'（'+it.n+' 个样本）')+'</option>').join('');
+    loadSpc();
+  }else{sel.innerHTML='<option>样本不足（每个指标至少 6 个数值点才能做控制图）</option>'}
+}
+function svgPareto(data){
+  const W=520,H=210,pad=34,bw=(W-pad*2)/Math.max(data.length,1);
+  const max=Math.max(...data.map(d=>d.count),1), total=data.reduce((a,b)=>a+b.count,0);
+  let bars='',line='',acc=0,cum=[];
+  data.forEach((d,i)=>{
+    const h=(H-pad*2)*d.count/max, x=pad+i*bw, y=H-pad-h;
+    bars+='<rect x="'+(x+bw*0.15)+'" y="'+y+'" width="'+bw*0.7+'" height="'+h+'" fill="#4a90d9" rx="3"/>'
+      +'<text x="'+(x+bw/2)+'" y="'+(y-4)+'" font-size="10" fill="#5a6b80" text-anchor="middle">'+d.count+'</text>'
+      +'<text x="'+(x+bw/2)+'" y="'+(H-pad+13)+'" font-size="10" fill="#6b7c93" text-anchor="middle">'+esc(d.name.length>7?d.name.slice(0,6)+'…':d.name)+'</text>';
+    acc+=d.count; cum.push([x+bw/2, H-pad-(H-pad*2)*(acc/total)]);
+  });
+  line=cum.map((p,i)=>(i?'L':'M')+p[0]+' '+p[1]).join(' ');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto">'
+    +'<line x1="'+pad+'" y1="'+(H-pad)+'" x2="'+(W-pad)+'" y2="'+(H-pad)+'" stroke="#dfe8f3"/>'
+    +bars+'<path d="'+line+'" fill="none" stroke="#e8894a" stroke-width="2"/>'
+    +cum.map(p=>'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="2.6" fill="#e8894a"/>').join('')
+    +'<text x="'+(W-pad)+'" y="16" font-size="10" fill="#e8894a" text-anchor="end">— 累计占比（橙）</text>'
+    +'</svg>';
+}
+function svgTrend(trend){
+  const W=560,H=210,pad=30;
+  const max=Math.max(1,...trend.map(d=>Math.max(d.iqc||0,d.ipqc||0,d.oqc||0)));
+  const xs=i=>pad+(W-pad*2)*i/Math.max(trend.length-1,1);
+  const ys=v=>H-pad-(H-pad*2)*v/max;
+  const series=[['iqc','#4a90d9','来料'],['ipqc','#37a86b','过程'],['oqc','#e8894a','成品']];
+  let path='';
+  series.forEach(([k,col,name])=>{
+    path+='<path d="'+trend.map((d,i)=>(i?'L':'M')+xs(i)+' '+ys(d[k]||0)).join(' ')+'" fill="none" stroke="'+col+'" stroke-width="2"/>';
+    path+=trend.map((d,i)=>'<circle cx="'+xs(i)+'" cy="'+ys(d[k]||0)+'" r="2.2" fill="'+col+'"><title>'+esc(d.date)+' '+name+' '+((d[k]||0))+' 单</title></circle>').join('');
+  });
+  let labels='';
+  trend.forEach((d,i)=>{ if(i%Math.ceil(trend.length/8)===0) labels+='<text x="'+xs(i)+'" y="'+(H-pad+13)+'" font-size="9.5" fill="#6b7c93" text-anchor="middle">'+esc(d.date)+'</text>' });
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto">'
+    +'<line x1="'+pad+'" y1="'+(H-pad)+'" x2="'+(W-pad)+'" y2="'+(H-pad)+'" stroke="#dfe8f3"/>'
+    +'<line x1="'+pad+'" y1="'+pad+'" x2="'+pad+'" y2="'+(H-pad)+'" stroke="#dfe8f3"/>'
+    +path+labels
+    +'<g font-size="10">'+series.map(([k,col,name],j)=>'<rect x="'+(W-pad-64+0)+'" y="'+(12+j*14)+'" width="8" height="8" fill="'+col+'"/><text x="'+(W-pad-52)+'" y="'+(20+j*14)+'" fill="#6b7c93">'+name+'</text>').join('')+'</g>'
+    +'</svg>';
+}
+async function loadSpc(){
+  const items=window.__spcItems||[];
+  const idx=Number(document.getElementById('spc-sel').value);
+  const it=items[idx];
+  if(!it)return;
+  const box=document.getElementById('spc-box');
+  box.innerHTML='<div style="color:var(--text-sub);font-size:13px">加载中…</div>';
+  let ch;
+  try{
+    ch=await api('/api/spc/chart?check_type='+encodeURIComponent(it.check_type)
+      +'&indicator='+encodeURIComponent(it.indicator)
+      +'&object_type='+(it.object_type||'')+'&object_id='+(it.object_id||0)+'&limit=25');
+  }catch(e){box.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>';return}
+  const al=document.getElementById('spc-alarm');
+  if(ch.note){al.innerHTML='<span class="tag tag-gray">'+esc(ch.note)+'</span>';}
+  else if(ch.alarm){al.innerHTML='<span class="tag tag-red">⚠ 失控预警：'+ch.out_of_control.length+' 个点超出控制限（规格内但仍需关注）</span>';}
+  else{al.innerHTML='<span class="tag tag-green">✔ 过程受控（无超控制限点）</span>';}
+  box.innerHTML=svgControl(ch,it);
+  if(ch.out_of_control&&ch.out_of_control.length){
+    box.innerHTML+='<div style="margin-top:10px;font-size:12.5px;color:var(--bad)">'
+      +ch.out_of_control.map(o=>'⚠ '+esc(o.date)+' <b>'+esc(o.label)+'</b> 实测 '+o.value+'（'+esc(o.side)+'）').join('<br>')+'</div>';
+  }
+}
+function svgControl(ch,it){
+  const pts=ch.points;
+  const W=620,H=250,padL=46,padR=76,padT=18,padB=30;
+  const vals=pts.map(p=>p.value);
+  const cands=vals.concat([ch.ucl,ch.lcl].filter(v=>v!=null));
+  if(ch.spec&&ch.spec.min_val!=null)cands.push(ch.spec.min_val);
+  if(ch.spec&&ch.spec.max_val!=null)cands.push(ch.spec.max_val);
+  let lo=Math.min(...cands),hi=Math.max(...cands);
+  const spanM=(hi-lo)||Math.abs(hi)||1; lo-=spanM*0.12; hi+=spanM*0.12;
+  const xs=i=>padL+(W-padL-padR)*i/Math.max(pts.length-1,1);
+  const ys=v=>H-padB-(H-padB-padT)*(v-lo)/(hi-lo);
+  const line=(v,col,dash,label)=>{
+    if(v==null)return '';
+    return '<line x1="'+padL+'" y1="'+ys(v)+'" x2="'+(W-padR)+'" y2="'+ys(v)+'" stroke="'+col+'" stroke-width="1.4" '+(dash?'stroke-dasharray="5 4"':'')+'/>'
+      +'<text x="'+(W-padR+4)+'" y="'+(ys(v)+3.5)+'" font-size="10" fill="'+col+'">'+label+' '+v+'</text>';
+  };
+  let g='',sp='';
+  for(let i=0;i<=4;i++){
+    const v=lo+(hi-lo)*i/4;
+    g+='<line x1="'+padL+'" y1="'+ys(v)+'" x2="'+(W-padR)+'" y2="'+ys(v)+'" stroke="#eef4fa"/>'
+      +'<text x="'+(padL-6)+'" y="'+(ys(v)+3.5)+'" font-size="10" fill="#8595a8" text-anchor="end">'+v.toFixed(1)+'</text>';
+  }
+  const path=pts.map((p,i)=>(i?'L':'M')+xs(i)+' '+ys(p.value)).join(' ');
+  pts.forEach((p,i)=>{
+    sp+='<circle cx="'+xs(i)+'" cy="'+ys(p.value)+'" r="'+(p.oc?5:3.4)+'" fill="'+(p.oc?'#c92a3d':'#4a90d9')+'" stroke="#fff" stroke-width="1.4"><title>'+esc(p.date+' '+p.label)+'：'+p.value+'</title></circle>';
+  });
+  const specLines=(ch.spec&&ch.spec.min_val!=null?line(ch.spec.min_val,'#37a86b',true,'规格下限'):'')
+    +(ch.spec&&ch.spec.max_val!=null?line(ch.spec.max_val,'#37a86b',true,'规格上限'):'');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;max-height:320px">'
+    +g+specLines+line(ch.ucl,'#c92a3d',true,'UCL')+line(ch.lcl,'#c92a3d',true,'LCL')+line(ch.center,'#2f6fa8',false,'CL')
+    +'<path d="'+path+'" fill="none" stroke="#9dc0e0" stroke-width="1.6"/>'+sp
+    +'<text x="'+padL+'" y="'+(H-6)+'" font-size="10.5" fill="#6b7c93">'+esc(it.check_type_name+' · '+it.scope+' · '+it.indicator)+'（最近 '+pts.length+' 批，红点=超控制限）</text>'
+    +'</svg>';
+}
+
+/* ═══════════ 车间大屏（第5步，深色 + 30 秒自动刷新）═══════════ */
+let SCREEN_TIMER=null;
+async function renderScreenPage(){
+  document.getElementById('content').innerHTML='<div id="screen-root"></div>';
+  await loadScreen();
+  if(SCREEN_TIMER)clearInterval(SCREEN_TIMER);
+  SCREEN_TIMER=setInterval(()=>{ if(document.getElementById('screen-root'))loadScreen(); else clearInterval(SCREEN_TIMER) },30000);
+}
+async function loadScreen(){
+  const root=document.getElementById('screen-root');
+  if(!root)return;
+  let d;
+  try{d=await api('/api/screen')}catch(e){root.innerHTML='<div style="color:#f66;padding:20px">✘ '+esc(e.message)+'</div>';return}
+  const k=d.kpi,t=d.todo;
+  const big=(label,val,color)=>'<div class="sc-card"><div class="sc-lb">'+esc(label)+'</div><div class="sc-v" style="color:'+color+'">'+val+'</div></div>';
+  root.className='sc-wrap';
+  root.innerHTML=
+    '<div class="sc-head"><div class="sc-title">🏭 车间质量看板</div>'
+    +'<div class="sc-time">更新于 '+esc(d.updated_at)+'　·　30 秒自动刷新</div></div>'
+    +'<div class="sc-row">'
+    +big('今日检验',k.today_tests,'#4fc3f7')
+    +big('今日合格率',k.today_rate==null?'—':k.today_rate+'%',k.today_rate!=null&&k.today_rate<90?'#ff8a80':'#69f0ae')
+    +big('今日不合格',k.today_fail,k.today_fail?'#ff8a80':'#69f0ae')
+    +big('待检来料',t.iqc_wait,t.iqc_wait?'#ffd54f':'#9fb3c8')
+    +big('待过程检验',t.prod_wait,t.prod_wait?'#ffd54f':'#9fb3c8')
+    +big('待成品检验',t.oqc_wait,t.oqc_wait?'#ffd54f':'#9fb3c8')
+    +big('待处理NCR',t.ncr_open,t.ncr_open?'#ff8a80':'#69f0ae')
+    +big('冻结批次',t.frozen,t.frozen?'#ff8a80':'#69f0ae')
+    +'</div>'
+    +'<div class="sc-row2">'
+    +'<div class="sc-panel"><div class="sc-ph">近30天 检验合格率</div>'
+    +'<div style="display:flex;gap:26px;text-align:center;padding:14px 0">'
+    +[['来料 IQC',d.rates.iqc],['过程 IPQC',d.rates.ipqc],['成品 OQC',d.rates.oqc]].map(([n,v])=>
+        '<div style="flex:1"><div style="font-size:13px;color:#9fb3c8">'+n+'</div><div style="font-size:32px;font-weight:700;color:'+(v!=null&&v<90?'#ff8a80':'#69f0ae')+'">'+(v==null?'—':v+'%')+'</div></div>').join('')
+    +'</div></div>'
+    +'<div class="sc-panel"><div class="sc-ph">各工序过程合格率（近30天）</div>'
+    +d.lines.map(l=>'<div style="display:flex;align-items:center;gap:10px;margin:7px 0;font-size:13px">'
+      +'<span style="width:74px;color:#cfe3f7">'+esc(l.station)+'</span>'
+      +'<div style="flex:1;background:#12324d;height:12px;border-radius:6px;overflow:hidden"><div style="width:'+(l.rate||0)+'%;height:100%;background:'+((l.rate||0)<90?'#ff8a80':'#4fc3f7')+'"></div></div>'
+      +'<span style="width:52px;text-align:right;color:#9fb3c8">'+(l.rate==null?'—':l.rate+'%')+'</span>'
+      +'<span style="width:44px;text-align:right;color:#61798f;font-size:11.5px">'+l.tests+'单</span></div>').join('')
+    +'</div></div>'
+    +'<div class="sc-panel" style="margin-top:12px"><div class="sc-ph">最近检验动态</div>'
+    +'<table class="sc-tbl"><thead><tr><th>时间</th><th>类型</th><th>批次</th><th>物料/产出</th><th>结果</th><th>检验员</th></tr></thead><tbody>'
+    +d.events.map(e=>'<tr><td>'+esc(e.time)+'</td><td>'+esc(e.type)+'</td><td style="font-size:11.5px">'+esc(e.lot_no)+'</td>'
+      +'<td>'+esc(e.material||'—')+'</td>'
+      +'<td style="color:'+(e.result===1?'#69f0ae':(e.result===2?'#ff8a80':'#9fb3c8'))+';font-weight:600">'+(e.result===1?'合格':(e.result===2?'不合格':'—'))+'</td>'
+      +'<td>'+esc(e.by)+'</td></tr>').join('')
+    +'</tbody></table></div>';
 }
 
 /* ═══════════ 启动 ═══════════ */
