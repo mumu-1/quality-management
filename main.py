@@ -435,6 +435,7 @@ for e in ENTITY_MODEL:
 
 # ═══════════════════════ 检验标准库（第2步） ═══════════════════════
 CHECK_TYPE_NAMES = {"iqc": "来料检验IQC", "ipqc": "过程检验IPQC", "oqc": "成品检验OQC"}
+CHECK_BY_NAMES = {"self": "车间自检", "dept": "质检部检测"}
 OBJ_TYPE_NAMES = {"material": "物料", "station": "工序"}
 
 
@@ -470,7 +471,7 @@ def std_out(db, s, with_items=False):
         ).order_by(M.QcStandardItem.seq).all()
         d["items"] = [{"id": it.id, "seq": it.seq, "indicator": it.indicator, "unit": it.unit,
                        "min_val": it.min_val, "max_val": it.max_val, "method": it.method,
-                       "is_key": it.is_key} for it in items]
+                       "is_key": it.is_key, "check_by": it.check_by or "dept"} for it in items]
     return d
 
 
@@ -580,14 +581,16 @@ def _replace_items(db, sid, items, username):
         o = old.get(indicator)
         if o and (o.min_val != lo or o.max_val != hi or o.unit != it.get("unit", "") or o.method != it.get("method", "")):
             changed.append(f"{indicator}")
+        _by = it.get("check_by") if it.get("check_by") in ("self", "dept") else "dept"
         if o:
             o.seq = i; o.unit = it.get("unit", ""); o.min_val = lo; o.max_val = hi
             o.method = it.get("method", ""); o.is_key = 1 if it.get("is_key") else 0
+            o.check_by = _by
         else:
             db.add(M.QcStandardItem(standard_id=sid, seq=i, indicator=indicator,
                                     unit=it.get("unit", ""), min_val=lo, max_val=hi,
                                     method=it.get("method", ""),
-                                    is_key=1 if it.get("is_key") else 0))
+                                    is_key=1 if it.get("is_key") else 0, check_by=_by))
     removed = [name for name in old if name not in new_names]
     for name in removed:
         old[name].enabled = 0
@@ -653,7 +656,7 @@ def std_copy(sid: int, body: dict, token: str = Header(""), db: Session = Depend
         raise HTTPException(400, "目标对象已存在同类型标准，不能重复复制")
     name = body.get("name") or f"{_std_object_name(db, otype, int(oid))}-{CHECK_TYPE_NAMES.get(src.check_type)}标准"
     items = [{"indicator": it.indicator, "unit": it.unit, "min_val": it.min_val,
-              "max_val": it.max_val, "method": it.method, "is_key": it.is_key}
+              "max_val": it.max_val, "method": it.method, "is_key": it.is_key, "check_by": it.check_by}
              for it in db.query(M.QcStandardItem).filter(
                  M.QcStandardItem.standard_id == sid, M.QcStandardItem.enabled == 1)
              .order_by(M.QcStandardItem.seq).all()]
@@ -826,7 +829,7 @@ def incoming_test_form(lot_id: int, token: str = Header(""), db: Session = Depen
             "sample_qty": std.sample_qty,
             "items": [{"indicator": it.indicator, "unit": it.unit,
                        "min_val": it.min_val, "max_val": it.max_val,
-                       "method": it.method, "is_key": it.is_key} for it in items]}
+                       "method": it.method, "is_key": it.is_key, "check_by": it.check_by} for it in items]}
 
 
 class TestIn(BaseModel):
@@ -850,9 +853,10 @@ def _judge_value(actual, lo, hi):
     return True, ""
 
 
-def _judge_and_fill(db, tr, std_items, body_items):
+def _judge_and_fill(db, tr, std_items, body_items, only_by=None):
     """通用：按标准逐项判定并写入 TestItem。返回 (fail_parts, fail_n, judged_n)
-    三类检验（来料/过程/成品）共用，保证判定逻辑只有一份。"""
+    三类检验（来料/过程/成品）共用，保证判定逻辑只有一份。
+    only_by: 只判定指定检测方（{'self'} 车间自检 / {'dept'} 质检部），None=不限"""
     fail_parts, fail_n, judged_n = [], 0, 0
     for seq, it in enumerate(body_items, start=1):
         indicator = (it.get("indicator") or "").strip()
@@ -862,6 +866,8 @@ def _judge_and_fill(db, tr, std_items, body_items):
         s = std_items.get(indicator)
         if not s:
             continue
+        if only_by and (getattr(s, "check_by", "dept") or "dept") not in only_by:
+            raise HTTPException(400, f"指标「{indicator}」不由你所在环节检测（{CHECK_BY_NAMES.get(getattr(s, 'check_by', 'dept'), '')}），请交对应环节录入")
         judged_n += 1
         lo, hi = s.min_val, s.max_val
         if s.min_val is None and s.max_val is None:
@@ -871,6 +877,7 @@ def _judge_and_fill(db, tr, std_items, body_items):
             passed, note = _judge_value(actual, lo, hi)
         db.add(M.TestItem(test_id=tr.id, seq=seq, indicator=indicator, unit=s.unit,
                           min_val=lo, max_val=hi, method=s.method, is_key=s.is_key,
+                          check_by=getattr(s, "check_by", "dept") or "dept",
                           actual=actual, pass_flag=1 if passed else 0))
         if not passed:
             fail_n += 1
@@ -1281,18 +1288,39 @@ def prod_test_form(pid: int, check_type: str = "ipqc", token: str = Header(""),
     items = db.query(M.QcStandardItem).filter(
         M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1
     ).order_by(M.QcStandardItem.seq).all()
+    n_self = len([x for x in items if (x.check_by or "dept") == "self"])
+    prev = db.query(M.TestRecord).filter(
+        M.TestRecord.prod_id == p.id, M.TestRecord.std_id == std.id,
+        M.TestRecord.check_type == check_type).order_by(M.TestRecord.id.desc()).first()
+    role = u.role_key
     return {"std_id": std.id, "std_no": std.std_no, "std_name": std.name,
             "check_type": check_type,
+            "self_count": n_self, "dept_count": len(items) - n_self,
+            "can_self": role in ("admin", "qm", "prodlead", "worker"),
+            "can_dept": role in ("admin", "qm", "qc"),
+            "self_done": bool(prev and prev.self_at),
+            "dept_done": bool(prev and prev.dept_at),
+            "test_no": prev.test_no if prev else "",
             "items": [{"indicator": it.indicator, "unit": it.unit,
                        "min_val": it.min_val, "max_val": it.max_val,
-                       "method": it.method, "is_key": it.is_key} for it in items]}
+                       "method": it.method, "is_key": it.is_key,
+                       "check_by": it.check_by or "dept"} for it in items]}
 
 
 class ProdTestIn(BaseModel):
     std_id: int
     check_type: str = "ipqc"      # ipqc / oqc
     items: list
+    stage: str = ""               # ""=整体判定(兼容/来料) / self=车间自检 / dept=质检部检测
     customer_id: int | None = None  # oqc 时可选：按客户出 COA
+
+
+def _fail_summary(bad_items):
+    """不合格摘要：逐项列出实测值并标注检测方来源（车间自检/质检部）"""
+    return "；".join(
+        f"{x.indicator} 实测{x.actual}"
+        + ("（车间自检）" if (x.check_by or "dept") == "self" else "（质检部）")
+        for x in bad_items[:8])
 
 
 def _prod_ncr_no(db):
@@ -1302,18 +1330,51 @@ def _prod_ncr_no(db):
 @app.post("/api/production-lots/{pid}/test")
 def prod_test(pid: int, body: ProdTestIn, token: str = Header(""),
               db: Session = Depends(get_db)):
-    """过程/成品检验提交：全合格 → 流转（末道成品批自动待成品检验/OQC 合格出 COA）；
-    有不合格 → 冻结 + NCR(prod)"""
+    """过程/成品检验提交（第二批：按检测方分阶段，一张单分两块）
+    stage=self 车间自检：车间角色可交，只判"自检"指标；全合格→可先流转，
+               若还有质检部指标未录则挂"待质检确认"（关键项不挡生产，质检后置把关）
+    stage=dept 质检部检测：质检角色可交，判"质检部"指标（与已有自检项合并成一张单）；
+               有不合格→冻结+NCR；全合格→完成并推进（末道成品→待成品检验 / OQC→出COA）
+    stage=""   整体判定（兼容老调用与来料检验）
+    """
     u = require_user(token, db)
     require_page(u, "prodlot")
-    _require_action(u, ["admin", "qm", "qc"])
     p = db.get(M.ProductionLot, pid)
     if not p:
         raise HTTPException(404, "生产批不存在")
     ctype = body.check_type
+    stage = (body.stage or "").strip().lower()
+    if stage not in ("", "self", "dept"):
+        raise HTTPException(400, "stage 须为 self/dept/空")
+    std = db.get(M.QcStandard, body.std_id)
+    if not std:
+        raise HTTPException(400, "标准不存在")
+    std_list = db.query(M.QcStandardItem).filter(
+        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1).all()
+    std_items = {it.indicator: it for it in std_list}
+    n_self = len([x for x in std_list if (x.check_by or "dept") == "self"])
+    n_dept = len(std_list) - n_self
+
+    # ── 环节 + 角色校验 ──
+    if stage == "self":
+        _require_action(u, ["admin", "qm", "prodlead", "worker"])
+        if n_self == 0:
+            raise HTTPException(400, "该工序标准没有配置「车间自检」指标，自检由质检部完成")
+        only_by = {"self"}
+    elif stage == "dept":
+        _require_action(u, ["admin", "qm", "qc"])
+        if n_dept == 0:
+            raise HTTPException(400, "该工序标准全部为「车间自检」指标，无需质检部检测")
+        only_by = {"dept"}
+    else:
+        _require_action(u, ["admin", "qm", "qc"])
+        only_by = None
+
+    # ── 批次状态校验 ──
     if ctype == "ipqc":
-        if p.status != 1:
-            raise HTTPException(400, f"该批状态为{PROD_STATUS.get(p.status)}，只有'待过程检验'可提交过程检验")
+        allow = (1, 2) if stage == "dept" else (1,)
+        if p.status not in allow:
+            raise HTTPException(400, f"该批状态为{PROD_STATUS.get(p.status)}，不能提交过程检验")
     elif ctype == "oqc":
         if p.status != 4:
             raise HTTPException(400, f"该批状态为{PROD_STATUS.get(p.status)}，只有'待成品检验'可提交成品检验")
@@ -1321,47 +1382,82 @@ def prod_test(pid: int, body: ProdTestIn, token: str = Header(""),
             raise HTTPException(400, "该批未登记产出物料")
     else:
         raise HTTPException(400, "check_type 须为 ipqc/oqc")
-    std = db.get(M.QcStandard, body.std_id)
-    if not std:
-        raise HTTPException(400, "标准不存在")
-    std_items = {it.indicator: it for it in db.query(M.QcStandardItem).filter(
-        M.QcStandardItem.standard_id == std.id, M.QcStandardItem.enabled == 1).all()}
-    today = datetime.now().strftime("%Y%m%d")
-    test_no = _next_no(db, M.TestRecord, "test_no", f"T-{today}-")
-    tr = M.TestRecord(test_no=test_no, prod_id=p.id, std_id=std.id,
-                      check_type=ctype, result=0, tested_by=u.username)
-    db.add(tr); db.flush()
-    fail_parts, fail_n, judged_n = _judge_and_fill(db, tr, std_items, body.items)
+
+    # ── 一张单分两块：质检提交时复用自检那张单 ──
+    tr = None
+    if stage == "dept":
+        tr = db.query(M.TestRecord).filter(
+            M.TestRecord.prod_id == p.id, M.TestRecord.std_id == std.id,
+            M.TestRecord.check_type == ctype, M.TestRecord.result == 0
+        ).order_by(M.TestRecord.id.desc()).first()
+    created = False
+    if tr is None:
+        today = datetime.now().strftime("%Y%m%d")
+        tr = M.TestRecord(test_no=_next_no(db, M.TestRecord, "test_no", f"T-{today}-"),
+                          prod_id=p.id, std_id=std.id, check_type=ctype,
+                          result=0, tested_by=u.username)
+        db.add(tr)
+        db.flush()
+        created = True
+    fail_parts, fail_n, judged_n = _judge_and_fill(db, tr, std_items, body.items, only_by=only_by)
     if judged_n == 0:
-        db.delete(tr); db.commit()
+        if created:
+            db.delete(tr)
+            db.commit()
         raise HTTPException(400, "没有可判定的检验项（请按模板逐项录入实测值）")
+    if stage == "self":
+        tr.self_by = u.username
+        tr.self_at = datetime.now()
+        tr.stage = 1
+    elif stage == "dept":
+        tr.dept_by = u.username
+        tr.dept_at = datetime.now()
+
+    # ── 汇总本单所有已录项（自检+质检）──
+    db.flush()
+    all_items = db.query(M.TestItem).filter(M.TestItem.test_id == tr.id).all()
+    bad = [x for x in all_items if x.pass_flag == 0]
+    got_dept = len([x for x in all_items if (x.check_by or "dept") == "dept"])
     ncr_no = None
-    if fail_n:
+    if bad:
         tr.result = 2
         p.status = 3 if ctype == "ipqc" else 6
-        summary = "；".join(fail_parts[:8])
+        p.pending_dept = 0
+        summary = _fail_summary(bad)
         ncr_no = _prod_ncr_no(db)
         db.add(M.Ncr(ncr_no=ncr_no, prod_id=p.id, test_id=tr.id, fail_summary=summary,
                      status=0, created_by=u.username))
-        audit(db, u.username, "create", f"ncr:{ncr_no}", f"{COA_CHECK_TYPES.get(ctype)}不合格自动开单：{summary[:60]}")
+        audit(db, u.username, "create", f"ncr:{ncr_no}",
+              f"{COA_CHECK_TYPES.get(ctype)}不合格自动开单：{summary[:60]}")
     else:
-        tr.result = 1
-        if ctype == "ipqc":
-            # 过程合格：末道产出成品 → 待成品检验；否则 → 过程合格可流入下工序
-            mat = db.get(M.Material, p.material_id) if p.material_id else None
-            if mat and mat.material_type == "成品":
-                p.status = 4
-            else:
+        dept_pending = got_dept < n_dept
+        if stage == "self" and dept_pending:
+            # 自检合格即可先流转；关键（质检部）项未出结果 → 挂待质检
+            tr.result = 0
+            tr.stage = 1
+            if ctype == "ipqc":
                 p.status = 2
-            audit(db, u.username, "update", f"prodlot:{p.lot_no}", f"过程检验合格 {test_no}")
+            p.pending_dept = 1
+            audit(db, u.username, "update", f"prodlot:{p.lot_no}",
+                  f"车间自检合格 {tr.test_no}（待质检部确认 {n_dept - got_dept} 项）")
         else:
-            p.status = 5   # 成品合格
-            _issue_coa(db, p, tr.id, body.customer_id, u.username)
-            audit(db, u.username, "update", f"prodlot:{p.lot_no}", f"成品检验合格出COA {test_no}")
+            tr.result = 1
+            tr.stage = 2
+            p.pending_dept = 0
+            if ctype == "ipqc":
+                mat = db.get(M.Material, p.material_id) if p.material_id else None
+                p.status = 4 if (mat and mat.material_type == "成品") else 2
+                audit(db, u.username, "update", f"prodlot:{p.lot_no}",
+                      f"过程检验合格 {tr.test_no}（自检{len([x for x in all_items if (x.check_by or 'dept')=='self'])}项/质检{n_dept}项）")
+            else:
+                p.status = 5
+                _issue_coa(db, p, tr.id, body.customer_id, u.username)
+                audit(db, u.username, "update", f"prodlot:{p.lot_no}", f"成品检验合格出COA {tr.test_no}")
     p.updated_at = datetime.now()
     db.commit()
-    return {"ok": True, "test_no": test_no, "result": tr.result,
-            "fail_summary": "；".join(fail_parts[:8]) if fail_n else "",
+    return {"ok": True, "test_no": tr.test_no, "result": tr.result, "stage": tr.stage,
+            "pending_dept": p.pending_dept, "status": p.status,
+            "fail_summary": _fail_summary(bad) if bad else "",
             "ncr_no": ncr_no}
 
 
@@ -1371,7 +1467,8 @@ def _issue_coa(db, prod_lot, test_id, customer_id, username):
     items = db.query(M.TestItem).filter(M.TestItem.test_id == test_id) \
         .order_by(M.TestItem.seq).all()
     snap = [{"indicator": it.indicator, "actual": it.actual, "unit": it.unit,
-             "min_val": it.min_val, "max_val": it.max_val, "pass": it.pass_flag}
+             "min_val": it.min_val, "max_val": it.max_val, "pass": it.pass_flag,
+             "check_by": it.check_by}
             for it in items]
     today = datetime.now().strftime("%Y%m%d")
     coa_no = _next_no(db, M.Coa, "coa_no", f"COA-{today}-")
@@ -1453,7 +1550,8 @@ def _trace_test_list(db, prod_id=None, lot_id=None):
             "created_at": tr.created_at.strftime("%Y-%m-%d %H:%M") if tr.created_at else "",
             "items": [{"indicator": it.indicator, "actual": it.actual, "unit": it.unit,
                        "min_val": it.min_val, "max_val": it.max_val,
-                       "pass": it.pass_flag, "is_key": it.is_key} for it in items],
+                       "pass": it.pass_flag, "is_key": it.is_key,
+                       "check_by": it.check_by or "dept"} for it in items],
             "fail_items": [it.indicator for it in items if it.pass_flag == 0],
         })
     return out

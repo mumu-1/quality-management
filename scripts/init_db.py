@@ -20,6 +20,38 @@ def _hash(pwd, salt=None):
     return salt, h
 
 
+
+# 各工序"车间自检"指标（其余默认质检部检测）；键=工序编码，值=指标名
+_SELF_ITEMS = {
+    "ST01": ["溶液温度", "pH值"],                       # 温度计/试纸现场可测
+    "ST03": ["反应温度", "反应时间"],                    # DCS 在线显示，车间可读
+    "ST05": ["滤饼水分", "滤液澄清度"],                  # 快速水分仪/目测
+    "ST06": ["出料温度", "外观颜色"],                    # 红外测温/目测
+    "ST08": ["包装净含量"],                              # 电子秤
+}
+
+
+def seed_check_by(db):
+    """给检验标准的每个指标分配检测方（幂等：库里还没有 self 项时才回填）"""
+    db.flush()
+    if db.query(QcStandardItem).filter(QcStandardItem.check_by == "self").count() > 0:
+        return
+    st_by_id = {s.id: s for s in db.query(Station).all()}
+    n = 0
+    for std in db.query(QcStandard).all():
+        if std.object_type != "station":
+            continue
+        st = st_by_id.get(std.object_id)
+        code = st.code if st else ""
+        selfs = _SELF_ITEMS.get(code, [])
+        for it in db.query(QcStandardItem).filter(QcStandardItem.standard_id == std.id).all():
+            if it.indicator in selfs:
+                it.check_by = "self"
+                n += 1
+    db.flush()
+    print(f"✔ 检测方分配: 标为车间自检的指标 {n} 项（其余为质检部检测）")
+
+
 def seed_standards(db):
     """第2步演示标准：已存在则跳过（幂等补种，可对第1步的库增量执行）"""
     if db.query(QcStandard).count() > 0:
@@ -809,6 +841,7 @@ def seed():
             # 已有库：增量补种（标准库 + 质检员多工序 + 来料演示）
             seed_duties(db)
             seed_standards(db)
+            seed_check_by(db)
             seed_user_stations(db)
             seed_incoming(db)
             seed_production(db)
@@ -934,6 +967,7 @@ def seed():
         seed_duties(db)
         # ═══ 第2步：检验标准库演示数据（按真实物料 × 检验类型）═══
         seed_standards(db)
+        seed_check_by(db)
         # ═══ 第3步：来料检验闭环演示数据 ═══
         seed_incoming(db)
         # ═══ 第4步：生产批次/成品检验演示数据 ═══

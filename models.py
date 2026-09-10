@@ -212,7 +212,8 @@ class QcStandardItem(Base):
     min_val = Column(Float, nullable=True)        # 下限（可空）
     max_val = Column(Float, nullable=True)        # 上限（可空）
     method = Column(String(200), default="")      # 检验方法/依据
-    is_key = Column(Integer, default=0)           # 1=关键指标（客户匹配用）
+    is_key = Column(Integer, default=0)           # 1=关键指标（必须质检合格才放行）
+    check_by = Column(String(10), default="dept")  # self=车间自检 / dept=质检部检测
     enabled = Column(Integer, default=1)
 
 
@@ -263,6 +264,11 @@ class TestRecord(Base):
     result = Column(Integer, default=0)               # 0待定/检验中 1合格 2不合格
     tested_by = Column(String(50), default="")
     remark = Column(String(300), default="")
+    self_by = Column(String(50), default="")          # 自检提交人
+    self_at = Column(DateTime, nullable=True)         # 自检提交时间
+    dept_by = Column(String(50), default="")          # 质检部提交人
+    dept_at = Column(DateTime, nullable=True)         # 质检部提交时间
+    stage = Column(Integer, default=0)                # 0未开始 1自检完成 2全部完成
     created_at = Column(DateTime, default=datetime.now)
     lot = relationship("IncomingLot")
     prod = relationship("ProductionLot")
@@ -280,6 +286,7 @@ class TestItem(Base):
     max_val = Column(Float, nullable=True)
     method = Column(String(200), default="")
     is_key = Column(Integer, default=0)
+    check_by = Column(String(10), default="dept")     # self=自检 / dept=质检部（快照标准）
     actual = Column(String(50), nullable=True)        # 实测值（存字符串，允许"目测合格"类）
     pass_flag = Column(Integer, nullable=True)        # 1合格 0不合格 NULL未检
     remark = Column(String(200), default="")
@@ -324,6 +331,7 @@ class ProductionLot(Base):
     parent_lot_no = Column(String(120), default="")    # 父批号（展示用）
     qty = Column(Float, default=0)
     unit = Column(String(20), default="kg")
+    pending_dept = Column(Integer, default=0)   # 1=自检合格已放行，但质检部项尚未出结果
     status = Column(Integer, default=1)                # 见类注释
     operator = Column(String(50), default="")          # 班组长/完工登记人
     remark = Column(String(300), default="")
