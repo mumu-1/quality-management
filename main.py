@@ -49,10 +49,14 @@ PAGES = {
     "station":     ("⚙️ 工序管理", "基础资料", "station"),
     "team":        ("👥 班组管理", "基础资料", "team"),
     "equipment":   ("🔧 设备管理", "基础资料", "equipment"),
+    "department":  ("🏢 部门管理", "基础资料", "department"),
+    "position":    ("👔 职务管理", "基础资料", "position"),
     "user":        ("🛠️ 账号管理", "系统管理", "user"),
+    "duty":        ("🔐 岗位职责", "系统管理", "duty"),
 }
 _QC_CORE = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
-_BASEINFO = ["material", "supplier", "customer", "workshop", "station", "team", "equipment"]
+_BASEINFO = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
+             "department", "position"]
 # 角色 → 可访问页面
 ROLE_PAGES = {
     "admin":     list(PAGES.keys()),
@@ -67,8 +71,10 @@ ROLE_PAGES = {
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
-    "admin":   ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "user", "qcstandard", "incoming", "ncr", "prodlot"],
-    "qm":      ["material", "supplier", "customer", "workshop", "station", "team", "equipment", "qcstandard", "incoming", "ncr", "prodlot"],
+    "admin":   ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
+                "department", "position", "user", "duty", "qcstandard", "incoming", "ncr", "prodlot"],
+    "qm":      ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
+                "department", "position", "qcstandard", "incoming", "ncr", "prodlot"],
     "prodlead": ["prodlot"],
     "buyer":   ["supplier", "incoming", "ncr"],
 }
@@ -82,6 +88,8 @@ ENTITY_MODEL = {
     "station":   M.Station,
     "team":      M.Team,
     "equipment": M.Equipment,
+    "department": M.Department,
+    "position":   M.Position,
 }
 ENTITY_COLS = {
     "material":  ["code", "name", "material_type", "spec", "unit", "remark"],
@@ -91,6 +99,8 @@ ENTITY_COLS = {
     "station":   ["code", "name", "workshop_id", "seq", "remark"],
     "team":      ["name", "leader", "remark"],
     "equipment": ["code", "name", "station_id", "category", "remark"],
+    "department": ["code", "name", "remark"],
+    "position":   ["code", "name", "remark"],
 }
 
 
@@ -109,7 +119,8 @@ def get_user_by_token(db: Session, token: str):
     row = db.query(M.AuthToken).filter(M.AuthToken.token == token).first()
     if not row or row.expires_at < datetime.now():
         return None
-    return db.query(M.User).filter(M.User.id == row.user_id, M.User.enabled == True).first()
+    u = db.query(M.User).filter(M.User.id == row.user_id, M.User.enabled == True).first()
+    return attach_duty(u, db)
 
 
 def audit(db, username, action, target, detail=""):
@@ -127,19 +138,58 @@ def _load_json_list(v):
         return None
 
 
+def _duty_of(db, dept_id, position_id):
+    """按 部门+职务 找岗位职责模板：优先精确(部门+职务)，其次通用职务(部门为空)"""
+    if not position_id:
+        return None
+    q = db.query(M.DutyTemplate).filter(M.DutyTemplate.position_id == position_id,
+                                        M.DutyTemplate.enabled == True)
+    if dept_id:
+        d = q.filter(M.DutyTemplate.dept_id == dept_id).first()
+        if d:
+            return d
+    return q.filter(M.DutyTemplate.dept_id.is_(None)).first()
+
+
+def attach_duty(user, db):
+    """把 部门+职务 的职责模板解析结果挂到 user 上（user_pages/user_manage 无需再查库）"""
+    if user is None:
+        return user
+    d = _duty_of(db, getattr(user, "dept_id", None), getattr(user, "position_id", None))
+    user._duty_view = _load_json_list(d.view_pages) if d else None
+    user._duty_manage = _load_json_list(d.manage_modules) if d else None
+    return user
+
+
+def perm_source(user) -> str:
+    """权限来源：account(账号微调) / duty(部门+职务) / role(角色默认)"""
+    if _load_json_list(getattr(user, "view_pages", None)) is not None or \
+       _load_json_list(getattr(user, "manage_modules", None)) is not None:
+        return "account"
+    if getattr(user, "_duty_view", None) is not None or getattr(user, "_duty_manage", None) is not None:
+        return "duty"
+    return "role"
+
+
 def user_pages(user) -> list:
-    """有效页面权限：账号自定义 view_pages > 角色默认模板"""
+    """有效页面权限：账号自定义 > 部门+职务职责模板 > 角色默认"""
     custom = _load_json_list(getattr(user, "view_pages", None))
     if custom is not None:
         return [k for k in custom if k in PAGES]
+    duty = getattr(user, "_duty_view", None)
+    if duty is not None:
+        return [k for k in duty if k in PAGES]
     return ROLE_PAGES.get(user.role_key, ["dashboard"])
 
 
 def user_manage(user) -> list:
-    """有效管理权限：账号自定义 manage_modules > 角色默认模板"""
+    """有效管理权限：账号自定义 > 部门+职务职责模板 > 角色默认"""
     custom = _load_json_list(getattr(user, "manage_modules", None))
     if custom is not None:
         return [k for k in custom if k in PAGES]
+    duty = getattr(user, "_duty_manage", None)
+    if duty is not None:
+        return [k for k in duty if k in PAGES]
     return ROLE_MANAGE.get(user.role_key, [])
 
 
@@ -177,12 +227,19 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     db.add(M.AuthToken(token=token, user_id=u.id,
                        expires_at=datetime.now() + timedelta(hours=TOKEN_TTL_HOURS)))
     db.commit()
+    attach_duty(u, db)
     pm = page_meta(u)
+    _pos = db.get(M.Position, u.position_id) if u.position_id else None
+    _dep = db.get(M.Department, u.dept_id) if u.dept_id else None
     return {"token": token, "user": {
         "id": u.id, "username": u.username, "real_name": u.real_name,
-        "department": u.department, "role": u.role_key, "station_id": u.station_id,
+        "department": u.department, "dept_id": u.dept_id,
+        "dept_name": _dep.name if _dep else u.department,
+        "position_id": u.position_id, "position_name": _pos.name if _pos else "",
+        "role": u.role_key, "station_id": u.station_id,
         "station_ids": get_user_stations(db, u.id) or ([u.station_id] if u.station_id else []),
         "perm_custom": _load_json_list(u.view_pages) is not None or _load_json_list(u.manage_modules) is not None,
+        "perm_source": perm_source(u),
     }, "menus": pm["menus"]}
 
 
@@ -331,6 +388,18 @@ def delete_entity(entity, eid, db, user):
     if entity == "material":
         # 物料被使用保护（后续批次表建好后在此扩展）
         pass
+    if entity == "department":
+        if db.query(M.User).filter(M.User.dept_id == eid, M.User.enabled == True).first():
+            raise HTTPException(400, "该部门下还有账号，不能删除（可先调整人员或停用账号）")
+        if db.query(M.DutyTemplate).filter(M.DutyTemplate.dept_id == eid,
+                                           M.DutyTemplate.enabled == True).first():
+            raise HTTPException(400, "该部门还配着岗位职责，请先在「岗位职责」里停用")
+    if entity == "position":
+        if db.query(M.User).filter(M.User.position_id == eid, M.User.enabled == True).first():
+            raise HTTPException(400, "该职务下还有账号，不能删除（可先调整人员）")
+        if db.query(M.DutyTemplate).filter(M.DutyTemplate.position_id == eid,
+                                           M.DutyTemplate.enabled == True).first():
+            raise HTTPException(400, "该职务还配着岗位职责，请先在「岗位职责」里停用")
     m.enabled = False   # 软删除
     db.commit()
     audit(db, user.username, "delete", f"{entity}:{eid}", "")
@@ -2118,6 +2187,98 @@ def lan_qr(token: str = Header(""), db: Session = Depends(get_db)):
               headers={"X-QMS-URL": url})
 
 
+# ═══════════════════════ 岗位职责（部门+职务 → 模块权限）═══════════════════════
+@app.get("/api/duty-matrix")
+def duty_matrix(token: str = Header(""), db: Session = Depends(get_db)):
+    """岗位职责配置页所需数据：部门、职务、职责模板、可选模块清单"""
+    u = require_user(token, db)
+    require_page(u, "duty")
+    deps = db.query(M.Department).filter(M.Department.enabled == True).order_by(M.Department.seq, M.Department.id).all()
+    poss = db.query(M.Position).filter(M.Position.enabled == True).order_by(M.Position.seq, M.Position.id).all()
+    tpls = db.query(M.DutyTemplate).filter(M.DutyTemplate.enabled == True).all()
+    return {
+        "departments": [{"id": d.id, "code": d.code, "name": d.name} for d in deps],
+        "positions": [{"id": p.id, "code": p.code, "name": p.name} for p in poss],
+        "templates": [{"id": t.id, "dept_id": t.dept_id, "position_id": t.position_id,
+                       "view_pages": _load_json_list(t.view_pages) or [],
+                       "manage_modules": _load_json_list(t.manage_modules) or [],
+                       "updated_by": t.updated_by or "",
+                       "updated_at": t.updated_at.strftime("%Y-%m-%d %H:%M") if t.updated_at else ""}
+                      for t in tpls],
+        "modules": [{"key": k, "name": v[0], "group": v[1]} for k, v in PAGES.items()],
+        "roles": [{"key": k, "name": ROLE_NAMES.get(k, k), "pages": ROLE_PAGES.get(k, []),
+                   "manage": ROLE_MANAGE.get(k, [])} for k in ROLE_PAGES],
+        "user_count": {t.position_id: db.query(M.User).filter(
+            M.User.position_id == t.position_id, M.User.enabled == True).count()
+            for t in tpls},
+    }
+
+
+class DutyIn(BaseModel):
+    dept_id: int | None = None        # 空 = 通用职务（任何部门兜底）
+    position_id: int
+    view_pages: list = []
+    manage_modules: list = []
+    remark: str = ""
+
+
+@app.post("/api/duty-templates")
+def duty_save(body: DutyIn, token: str = Header(""), db: Session = Depends(get_db)):
+    """新增/更新一个"部门+职务"的职责模板（同组合覆盖）"""
+    u = require_user(token, db)
+    require_page(u, "duty"); require_manage(u, "duty")
+    if not db.get(M.Position, body.position_id):
+        raise HTTPException(400, "职务不存在")
+    if body.dept_id and not db.get(M.Department, body.dept_id):
+        raise HTTPException(400, "部门不存在")
+    pages = [k for k in body.view_pages if k in PAGES]
+    mgs = [k for k in body.manage_modules if k in PAGES]
+    if not pages:
+        raise HTTPException(400, "至少要勾选一个可见模块")
+    bad = [k for k in mgs if k not in pages]
+    if bad:
+        raise HTTPException(400, f"可管理模块必须同时可见：{'、'.join(PAGES[k][0] for k in bad)}")
+    q = db.query(M.DutyTemplate).filter(M.DutyTemplate.position_id == body.position_id,
+                                        M.DutyTemplate.enabled == True)
+    q = q.filter(M.DutyTemplate.dept_id == body.dept_id) if body.dept_id else q.filter(M.DutyTemplate.dept_id.is_(None))
+    t = q.first()
+    if t:
+        t.view_pages = json.dumps(pages, ensure_ascii=False)
+        t.manage_modules = json.dumps(mgs, ensure_ascii=False)
+        t.remark = body.remark or t.remark
+        t.updated_by = u.username
+        t.updated_at = datetime.now()
+        action = "update"
+    else:
+        t = M.DutyTemplate(dept_id=body.dept_id, position_id=body.position_id,
+                           view_pages=json.dumps(pages, ensure_ascii=False),
+                           manage_modules=json.dumps(mgs, ensure_ascii=False),
+                           remark=body.remark, updated_by=u.username)
+        db.add(t)
+        action = "create"
+    db.commit()
+    audit(db, u.username, action, f"duty:{body.position_id}",
+          f"部门{body.dept_id or '通用'} 模块{len(pages)}个")
+    db.commit()
+    return {"ok": True, "id": t.id}
+
+
+@app.delete("/api/duty-templates/{tid}")
+def duty_delete(tid: int, token: str = Header(""), db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "duty"); require_manage(u, "duty")
+    t = db.get(M.DutyTemplate, tid)
+    if not t:
+        raise HTTPException(404, "职责模板不存在")
+    t.enabled = False
+    t.updated_by = u.username
+    t.updated_at = datetime.now()
+    db.commit()
+    audit(db, u.username, "delete", f"duty:{tid}", "停用职责模板")
+    db.commit()
+    return {"ok": True}
+
+
 # ═══════════════════════ 权限矩阵（供账号页勾选）═══════════════════════
 
 @app.get("/api/admin/perm-matrix")
@@ -2171,8 +2332,16 @@ def _save_user_perms(db, user, view_pages=None, manage_modules=None, present=Non
 
 
 def _user_row(db, x):
+    attach_duty(x, db)
+    _pos = db.get(M.Position, x.position_id) if x.position_id else None
+    _dep = db.get(M.Department, x.dept_id) if x.dept_id else None
     return {"id": x.id, "username": x.username, "real_name": x.real_name,
-            "department": x.department, "role": x.role_key,
+            "department": x.department or (_dep.name if _dep else ""),
+            "dept_id": x.dept_id, "dept_name": _dep.name if _dep else "",
+            "position_id": x.position_id, "position_name": _pos.name if _pos else "",
+            "perm_source": perm_source(x),
+            "eff_pages": user_pages(x), "eff_manage": user_manage(x),
+            "role": x.role_key,
             "role_name": ROLE_NAMES.get(x.role_key, x.role_key),
             "station_id": x.station_id,
             "station_ids": get_user_stations(db, x.id) or ([x.station_id] if x.station_id else []),
@@ -2187,6 +2356,8 @@ class UserIn(BaseModel):
     real_name: str
     password: str = "123456"
     department: str = ""
+    dept_id: int | None = None        # 所属部门（与职务一起决定岗位职责权限）
+    position_id: int | None = None    # 职务
     role_key: str = "qc"
     station_id: int | None = None
     station_ids: list = []        # 负责工序（多选）
@@ -2216,8 +2387,11 @@ def admin_create_user(body: UserIn, token: str = Header(""), db: Session = Depen
     if body.role_key not in ROLE_PAGES:
         raise HTTPException(400, f"未知角色: {body.role_key}")
     salt, h = hash_pwd(body.password)
+    _dep = db.get(M.Department, body.dept_id) if body.dept_id else None
     nu = M.User(username=body.username.strip(), real_name=body.real_name.strip(),
-                department=body.department.strip(), role_key=body.role_key,
+                department=(_dep.name if _dep else body.department.strip()),
+                dept_id=body.dept_id, position_id=body.position_id,
+                role_key=body.role_key,
                 station_id=body.station_id, password_salt=salt, password_hash=h)
     db.add(nu); db.flush()
     _save_user_stations(db, nu.id, body.station_ids if body.station_ids else
@@ -2233,6 +2407,8 @@ def admin_create_user(body: UserIn, token: str = Header(""), db: Session = Depen
 class UserEditIn(BaseModel):
     real_name: str | None = None
     department: str | None = None
+    dept_id: int | None = None
+    position_id: int | None = None
     role_key: str | None = None
     station_id: int | None = None
     station_ids: list | None = None
@@ -2249,7 +2425,21 @@ def admin_edit_user(uid: int, body: UserEditIn, token: str = Header(""), db: Ses
     if not m:
         raise HTTPException(404, "用户不存在")
     if body.real_name is not None: m.real_name = body.real_name
-    if body.department is not None: m.department = body.department
+    if "dept_id" in body.model_fields_set:
+        if body.dept_id:
+            _dep = db.get(M.Department, body.dept_id)
+            if not _dep:
+                raise HTTPException(400, "部门不存在")
+            m.dept_id = body.dept_id
+            m.department = _dep.name          # 冗余显示名同步
+        else:
+            m.dept_id = None
+    if "position_id" in body.model_fields_set:
+        if body.position_id and not db.get(M.Position, body.position_id):
+            raise HTTPException(400, "职务不存在")
+        m.position_id = body.position_id
+    if body.department is not None and "dept_id" not in body.model_fields_set:
+        m.department = body.department
     if body.role_key is not None:
         if body.role_key not in ROLE_PAGES:
             raise HTTPException(400, f"未知角色: {body.role_key}")

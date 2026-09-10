@@ -14,13 +14,56 @@ class User(Base):
     password_salt = Column(String(32), nullable=False)
     password_hash = Column(String(128), nullable=False)
     real_name = Column(String(50), nullable=False)
-    department = Column(String(50), default="")        # 部门/车间
+    department = Column(String(50), default="")        # 部门名（冗余显示，随 dept_id 同步）
+    dept_id = Column(Integer, nullable=True)           # 所属部门（department 表）
+    position_id = Column(Integer, nullable=True)       # 职务（position 表）→ 决定岗位职责
     role_key = Column(String(30), nullable=False)      # admin/boss/qm/qc/sampler/prodlead/buyer/store
     station_id = Column(Integer, nullable=True)        # 主绑定工序（兼容旧数据）
     view_pages = Column(Text, nullable=True)           # JSON 数组；NULL=按角色默认模板
     manage_modules = Column(Text, nullable=True)       # JSON 数组；NULL=按角色默认
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
+
+
+class Department(Base):
+    """部门（分权责基础：部门 + 职务 → 岗位职责模板 → 模块权限）"""
+    __tablename__ = "department"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(30), unique=True, nullable=False)      # DEPT-QC
+    name = Column(String(60), nullable=False)                    # 质量部
+    seq = Column(Integer, default=0)
+    remark = Column(String(300), default="")
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class Position(Base):
+    """职务（岗位）：如 检验员/班组长/车间主任"""
+    __tablename__ = "position"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(30), unique=True, nullable=False)       # POS-QC
+    name = Column(String(60), nullable=False)                    # 检验员
+    seq = Column(Integer, default=0)
+    remark = Column(String(300), default="")
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class DutyTemplate(Base):
+    """岗位职责模板：部门 + 职务 → 能看/能管的模块
+    优先级：账号自定义 > 本表 > 角色默认模板
+    dept_id 为空表示"通用职务"（任何部门未单独配置时兜底）"""
+    __tablename__ = "duty_template"
+    id = Column(Integer, primary_key=True)
+    dept_id = Column(Integer, nullable=True, index=True)
+    position_id = Column(Integer, nullable=False, index=True)
+    view_pages = Column(Text, nullable=True)          # JSON 数组
+    manage_modules = Column(Text, nullable=True)      # JSON 数组
+    remark = Column(String(300), default="")
+    enabled = Column(Boolean, default=True)
+    updated_by = Column(String(50), default="")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now)
 
 
 class UserStation(Base):

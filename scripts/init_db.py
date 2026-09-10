@@ -9,7 +9,7 @@ from database import Base, engine, SessionLocal, ensure_schema
 from models import (User, Material, Supplier, Customer, Workshop, Station,
                     Team, Equipment, QcStandard, QcStandardItem, UserStation,
                     IncomingLot, Sample, TestRecord, TestItem, Ncr,
-                    ProductionLot, Coa)
+                    ProductionLot, Coa, Department, Position, DutyTemplate)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -685,12 +685,129 @@ def seed_history(db):
     print(f"✔ 历史数据: 来料9批(含1不合格) + 生产链8条({sum(1 for p in db.query(ProductionLot).filter(ProductionLot.remark=='HIST') if p.status==5)}条到成品) + COA{n_coa}张 + SPC含失控点")
 
 
+
+# ═══════════════ 部门 / 职务 / 岗位职责（分权责：部门+职务 → 模块权限）═══════════════
+PAGES_ALL = ["dashboard", "screen", "board", "prodlot", "qcstandard", "incoming", "ncr",
+             "trace", "report", "material", "supplier", "customer", "workshop", "station",
+             "team", "equipment", "department", "position", "user", "duty"]
+MANAGE_ALL = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
+              "department", "position", "user", "duty", "qcstandard", "incoming", "ncr", "prodlot"]
+
+_DEPTS = [
+    ("DEPT-GM", "总经办", 1), ("DEPT-IT", "信息部", 2), ("DEPT-QC", "质量部", 3),
+    ("DEPT-PR", "生产部", 4), ("DEPT-PU", "采购部", 5), ("DEPT-WH", "仓储部", 6),
+    ("DEPT-EQ", "设备部", 7), ("DEPT-TC", "技术部", 8),
+]
+_POSITIONS = [
+    ("POS-GM", "总经理", 1), ("POS-ADMIN", "系统管理员", 2), ("POS-MGR-QC", "质量经理", 3),
+    ("POS-SUP-QC", "质量主管", 4), ("POS-QC", "检验员", 5), ("POS-LAB", "化验员", 6),
+    ("POS-SAMPLER", "取样员", 7), ("POS-DIR", "车间主任", 8), ("POS-PL", "班组长", 9),
+    ("POS-OP", "操作工", 10), ("POS-PU-MGR", "采购经理", 11), ("POS-BUYER", "采购员", 12),
+    ("POS-WH-MGR", "仓储主管", 13), ("POS-KEEPER", "库管", 14), ("POS-EQ-MGR", "设备主管", 15),
+    ("POS-FIXER", "维修工", 16), ("POS-TECH", "技术员", 17),
+]
+
+_BASE = ["material", "supplier", "customer", "workshop", "station", "team", "equipment",
+         "department", "position"]
+_QC = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
+_QC_LINE = ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace",
+            "report", "material", "equipment"]
+
+# (部门, 职务, 可见模块, 可管模块)；部门 None = 通用职务兜底
+_DUTIES = [
+    ("DEPT-IT", "POS-ADMIN", PAGES_ALL, MANAGE_ALL),
+    ("DEPT-GM", "POS-GM", _QC + _BASE, []),
+    ("DEPT-QC", "POS-MGR-QC", _QC + _BASE,
+     ["qcstandard", "incoming", "ncr", "prodlot", "material", "supplier", "customer",
+      "workshop", "station", "team", "equipment", "department", "position"]),
+    ("DEPT-QC", "POS-SUP-QC", _QC + _BASE,
+     ["qcstandard", "incoming", "ncr", "prodlot", "material", "equipment"]),
+    ("DEPT-QC", "POS-QC", _QC_LINE, []),
+    ("DEPT-QC", "POS-LAB", _QC_LINE, []),
+    ("DEPT-QC", "POS-SAMPLER", ["dashboard", "incoming", "material"], []),
+    ("DEPT-PR", "POS-DIR", ["dashboard", "screen", "board", "prodlot", "qcstandard", "trace",
+                            "report", "workshop", "station", "team", "equipment", "material"],
+     ["prodlot"]),
+    ("DEPT-PR", "POS-PL", ["dashboard", "screen", "prodlot", "qcstandard", "trace",
+                           "workshop", "station", "equipment", "team"], ["prodlot"]),
+    ("DEPT-PR", "POS-OP", ["dashboard", "prodlot"], []),
+    ("DEPT-PU", "POS-PU-MGR", ["dashboard", "incoming", "ncr", "trace", "material",
+                               "supplier", "customer"], ["supplier", "incoming", "ncr"]),
+    ("DEPT-PU", "POS-BUYER", ["dashboard", "incoming", "ncr", "trace", "material",
+                              "supplier", "customer"], ["supplier", "incoming", "ncr"]),
+    ("DEPT-WH", "POS-WH-MGR", ["dashboard", "incoming", "ncr", "trace", "material",
+                               "customer", "workshop"], []),
+    ("DEPT-WH", "POS-KEEPER", ["dashboard", "incoming", "ncr", "trace", "material",
+                               "customer", "workshop"], []),
+    ("DEPT-EQ", "POS-EQ-MGR", ["dashboard", "screen", "equipment", "station", "workshop",
+                               "trace"], ["equipment"]),
+    ("DEPT-EQ", "POS-FIXER", ["dashboard", "screen", "equipment", "station", "workshop",
+                              "trace"], []),
+    ("DEPT-TC", "POS-TECH", ["dashboard", "qcstandard", "trace", "report", "material",
+                             "station", "equipment"], ["qcstandard"]),
+    (None, "POS-OP", ["dashboard", "prodlot"], []),
+    (None, "POS-QC", _QC_LINE, []),
+]
+
+# 演示账号 → (部门code, 职务code)
+_USER_DUTY = {
+    "admin": ("DEPT-IT", "POS-ADMIN"), "boss": ("DEPT-GM", "POS-GM"),
+    "qm": ("DEPT-QC", "POS-MGR-QC"), "qc": ("DEPT-QC", "POS-QC"),
+    "qc2": ("DEPT-QC", "POS-QC"), "sampler": ("DEPT-QC", "POS-SAMPLER"),
+    "prodlead": ("DEPT-PR", "POS-PL"), "prodlead2": ("DEPT-PR", "POS-PL"),
+    "buyer": ("DEPT-PU", "POS-BUYER"), "store": ("DEPT-WH", "POS-KEEPER"),
+}
+
+
+def seed_duties(db):
+    """部门/职务/岗位职责（幂等）：老库增量也补齐，并把演示账号挂到岗位上"""
+    db.flush()
+    n_dep = n_pos = n_duty = n_user = 0
+    for code, name, seq in _DEPTS:
+        if not db.query(Department).filter(Department.code == code).first():
+            db.add(Department(code=code, name=name, seq=seq)); n_dep += 1
+    for code, name, seq in _POSITIONS:
+        if not db.query(Position).filter(Position.code == code).first():
+            db.add(Position(code=code, name=name, seq=seq)); n_pos += 1
+    db.flush()
+    dep_map = {d.code: d.id for d in db.query(Department).all()}
+    pos_map = {p.code: p.id for p in db.query(Position).all()}
+    dep_name = {c: n for c, n, _ in _DEPTS}
+    for dep_code, pos_code, pages, mgs in _DUTIES:
+        did = dep_map.get(dep_code) if dep_code else None
+        pid = pos_map.get(pos_code)
+        if not pid:
+            continue
+        q = db.query(DutyTemplate).filter(DutyTemplate.position_id == pid,
+                                          DutyTemplate.enabled == True)
+        q = q.filter(DutyTemplate.dept_id == did) if did else q.filter(DutyTemplate.dept_id.is_(None))
+        if q.first():
+            continue
+        db.add(DutyTemplate(dept_id=did, position_id=pid,
+                            view_pages=json.dumps(pages, ensure_ascii=False),
+                            manage_modules=json.dumps(mgs, ensure_ascii=False),
+                            remark="系统内置起步模板，可自行修改", updated_by="system"))
+        n_duty += 1
+    db.flush()
+    for uname, (dc, pc) in _USER_DUTY.items():
+        u = db.query(User).filter(User.username == uname).first()
+        if u and not u.position_id:
+            u.dept_id = dep_map.get(dc)
+            u.position_id = pos_map.get(pc)
+            if dc in dep_name:
+                u.department = dep_name[dc]
+            n_user += 1
+    db.flush()
+    print(f"✔ 岗位职责演示数据: 部门 +{n_dep} / 职务 +{n_pos} / 职责模板 +{n_duty} / 账号挂岗 {n_user}")
+
+
 def seed():
     ensure_schema()
     db = SessionLocal()
     try:
         if db.query(User).count() > 0:
             # 已有库：增量补种（标准库 + 质检员多工序 + 来料演示）
+            seed_duties(db)
             seed_standards(db)
             seed_user_stations(db)
             seed_incoming(db)
@@ -813,6 +930,8 @@ def seed():
         print("  演示账号: admin/qm/qc/sampler/prodlead/buyer/store/qc2/prodlead2/boss, 密码均 123456")
         print("  数据文件: qms.db")
 
+        # ═══ 分权责：部门/职务/岗位职责（并把演示账号挂到岗位上）═══
+        seed_duties(db)
         # ═══ 第2步：检验标准库演示数据（按真实物料 × 检验类型）═══
         seed_standards(db)
         # ═══ 第3步：来料检验闭环演示数据 ═══

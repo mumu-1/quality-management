@@ -331,6 +331,9 @@ function openPage(key){
     workshop:()=>renderEntityPage('workshop'),
     station:()=>renderStationPage(),
     team:()=>renderEntityPage('team'),
+    department:()=>renderEntityPage('department'),
+    position:()=>renderEntityPage('position'),
+    duty:()=>renderDutyPage(),
     equipment:()=>renderEquipmentPage(),
     user:()=>renderUserPage(),
   };
@@ -360,6 +363,8 @@ const PAGE_META={
   customer:{title:'客户管理',desc:'客户档案（COA 扫码将按客户隔离）',search:'客户编码/名称'},
   workshop:{title:'车间管理',desc:'单工厂多车间结构',search:'车间编码/名称'},
   team:{title:'班组管理',desc:'生产班组（甲/乙/丙班）',search:'班组名称'},
+  department:{title:'部门管理',desc:'部门是"分权责"的基础：部门 + 职务 决定这个人能看/能管哪些模块（见「岗位职责」）。',search:'部门编码/名称'},
+  position:{title:'职务管理',desc:'职务（岗位）如检验员/班组长/车间主任；职务对应的模块权限在「岗位职责」里配置。',search:'职务编码/名称'},
 };
 const MAT_TYPES=['原料','辅料','中间品','成品'];
 const ROLE_OPTS=[['admin','系统管理员'],['boss','高层'],['qm','质量经理'],['qc','检验员'],['sampler','取样员'],['prodlead','班组长/主管'],['buyer','采购'],['store','仓储']];
@@ -418,6 +423,12 @@ function addForm(entity){
     team:()=>'<div class="form-row">'
       +fld('班组名称','new-name','',120)+fld('班组长','new-leader','',90)
       +'<button class="btn btn-p" onclick="addRow(\'team\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    department:()=>'<div class="form-row">'
+      +fld('部门编码','new-code','DEPT-XX',110)+fld('部门名称','new-name','',160)
+      +'<button class="btn btn-p" onclick="addRow(\'department\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
+    position:()=>'<div class="form-row">'
+      +fld('职务编码','new-code','POS-XX',110)+fld('职务名称','new-name','',160)
+      +'<button class="btn btn-p" onclick="addRow(\'position\')">保存</button><button class="btn btn-o" onclick="this.closest(\'.panel\').style.display=\'none\'">收起</button></div>',
   };
   return F[entity]?F[entity]():'';
 }
@@ -431,12 +442,15 @@ const HEADERS={
   customer:['ID','编码','名称','联系人','电话','备注','操作'],
   workshop:['ID','编码','车间名称','备注','操作'],
   team:['ID','班组名称','班组长','备注','操作'],
+  department:['ID','部门编码','部门名称','备注','操作'],
+  position:['ID','职务编码','职务名称','备注','操作'],
 };
 function rowHtml(entity,row,mgr){
   if(entity==='material')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+typeTag(row.material_type)+'</td><td>'+esc(row.spec)+'</td><td>'+esc(row.unit)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
   if(entity==='supplier'||entity==='customer')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.contact)+'</td><td>'+esc(row.phone)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
   if(entity==='workshop')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
   if(entity==='team')return '<td>'+row.id+'</td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.leader)+'</td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
+  if(entity==='department'||entity==='position')return '<td>'+row.id+'</td><td><span class="tag tag-blue">'+esc(row.code)+'</span></td><td><b>'+esc(row.name)+'</b></td><td>'+esc(row.remark)+'</td>'+opTd(entity,row,mgr);
   return '';
 }
 function typeTag(t){const c={原料:'blue',辅料:'green',中间品:'gray',成品:'blue'}[t]||'gray';return '<span class="tag tag-'+c+'">'+t+'</span>'}
@@ -462,6 +476,8 @@ async function loadSupplier(){return loadEntity('supplier')}
 async function loadCustomer(){return loadEntity('customer')}
 async function loadWorkshop(){return loadEntity('workshop')}
 async function loadTeam(){return loadEntity('team')}
+async function loadDepartment(){return loadEntity('department')}
+async function loadPosition(){return loadEntity('position')}
 
 function collectNew(entity){
   const g=id=>document.getElementById('new-'+id)?document.getElementById('new-'+id).value.trim():'';
@@ -471,6 +487,8 @@ function collectNew(entity){
     customer:()=>({code:g('code'),name:g('name'),contact:g('contact'),phone:g('phone')}),
     workshop:()=>({code:g('code'),name:g('name')}),
     team:()=>({name:g('name'),leader:g('leader')}),
+    department:()=>({code:g('code'),name:g('name')}),
+    position:()=>({code:g('code'),name:g('name')}),
   };
   return m[entity]?m[entity]():{};
 }
@@ -650,12 +668,13 @@ function collectIds(containerId){
 
 async function renderUserPage(){
   await getPMatrix();
+  try{ if(!window.DUTY)window.DUTY=await api('/api/duty-matrix'); }catch(e){ window.DUTY=null; }
   const sts=await api('/api/station');
   window.ST_ALL=sts;
   const c=document.getElementById('content');
   const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='账号管理';
   const desc=document.createElement('div');desc.className='page-desc';
-  desc.textContent='账号 = 部门 × 角色 × 负责工序 + 动态权限。角色是"默认模板"，套用后仍可给单个人单独勾：能看哪些页面、能管哪些模块、负责哪些工序（质检员可管多道工序）。';
+  desc.textContent='账号 = 部门 + 职务（决定岗位职责权限）× 负责工序。选好"部门 + 职务"会自动套用「岗位职责」里的模块权限；特殊情况仍可给单个人微调（微调优先于岗位职责）。';
   c.appendChild(ttl);
   const btn=document.createElement('button');btn.className='btn btn-p';btn.style.cssText='float:right;margin-top:2px';
   btn.textContent='+ 新建账号';btn.onclick=()=>showUserForm();
@@ -668,7 +687,7 @@ async function renderUserPage(){
   const addbox=document.createElement('div');addbox.className='panel';addbox.id='addbox-user';addbox.style.display='none';
   c.appendChild(addbox);
   const tbl=document.createElement('div');tbl.className='tbl-wrap';
-  tbl.innerHTML='<table><thead><tr><th>用户名</th><th>姓名</th><th>部门</th><th>角色</th><th>负责工序</th><th>权限</th><th>状态</th><th>操作</th></tr></thead><tbody id="tbody-user"></tbody></table>';
+  tbl.innerHTML='<table><thead><tr><th>用户名</th><th>姓名</th><th>部门 · 职务</th><th>角色</th><th>负责工序</th><th>权限来源</th><th>状态</th><th>操作</th></tr></thead><tbody id="tbody-user"></tbody></table>';
   c.appendChild(tbl);
   loadUsers();
 }
@@ -680,14 +699,22 @@ function userFormShell(title,uid){
     +'<div class="form-row" style="margin-bottom:10px">'
     +'<div class="field"><label>用户名</label><input id="uf-username" style="width:110px"></div>'
     +'<div class="field"><label>姓名</label><input id="uf-name" style="width:90px"></div>'
-    +'<div class="field"><label>部门</label><input id="uf-dept" style="width:100px"></div>'
-    +'<div class="field"><label>角色（默认模板）</label><select id="uf-role" style="min-width:130px" onchange="applyRoleTemplate()">'
+    +'<div class="field"><label>部门（决定岗位职责）</label><select id="uf-dept-id" style="min-width:130px" onchange="applyDutyTemplate()">'
+    +(window.DUTY?'<option value="">— 请选择部门 —</option>'+window.DUTY.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')
+               :'<option value="">（未载入部门数据）</option>')+'</select></div>'
+    +'<div class="field"><label>职务（决定岗位职责）</label><select id="uf-pos-id" style="min-width:130px" onchange="applyDutyTemplate()">'
+    +(window.DUTY?'<option value="">— 请选择职务 —</option>'+window.DUTY.positions.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')
+               :'<option value="">（未载入职务数据）</option>')+'</select></div>'
+    +'<div class="field"><label>角色（兜底模板）</label><select id="uf-role" style="min-width:130px" onchange="applyRoleTemplate()">'
     +PMATRIX.roles.map(r=>'<option value="'+r.key+'">'+r.name+'</option>').join('')+'</select></div>'
     +(uid?'':'<div class="field"><label>初始密码</label><input id="uf-pwd" value="123456" style="width:90px"></div>')
     +'</div>'
     +'<div class="perm-sec"><div class="ps-title">🏭 负责工序（可多选：一人管多道工序）'
     +'<span class="ps-desc">选择后，检验待办/数据范围将按这些工序过滤</span></div><div id="uf-stations">'+stsHtml+'</div></div>'
-    +'<div class="perm-sec"><div class="ps-title">👁 能看哪些页面 <button class="btn btn-o btn-sm" onclick="applyRolePages()">套用角色默认</button>'
+    +'<div id="uf-perm-hint" style="font-size:12px;margin:2px 0 8px">权限来源：<span class="tag tag-gray">角色默认</span></div>'
+    +'<div class="perm-sec"><div class="ps-title">👁 能看哪些页面 '
+    +'<button class="btn btn-o btn-sm" onclick="applyDutyTemplate()">套用岗位职责</button> '
+    +'<button class="btn btn-o btn-sm" onclick="applyRolePages()">套用角色默认</button>'
     +'<span class="ps-desc">不勾=用角色默认；这里可单独加/减</span></div><div id="uf-pages"></div></div>'
     +'<div class="perm-sec"><div class="ps-title">🛠️ 能管理（增删改）哪些模块 <button class="btn btn-o btn-sm" onclick="applyRoleManage()">套用角色默认</button>'
     +'<span class="ps-desc">没勾的模块=只能看/操作，不能增删改</span></div><div id="uf-manage"></div></div>'
@@ -712,6 +739,30 @@ function pageChipsHtml(checkedSet,idPrefix){
 function applyRoleTemplate(){
   applyRolePages();applyRoleManage();
 }
+function dutyDefaultByIds(deptId,posId){
+  if(!window.DUTY)return null;
+  const t=dutyTpl(deptId===''||deptId===null||deptId===undefined?null:Number(deptId),
+                  posId===''||posId===null||posId===undefined?null:Number(posId));
+  return t?{pages:t.view_pages,manage:t.manage_modules}:null;
+}
+function applyDutyTemplate(){
+  const dEl=document.getElementById('uf-dept-id'), pEl=document.getElementById('uf-pos-id');
+  const hint=document.getElementById('uf-perm-hint');
+  if(!dEl||!pEl)return;
+  const t=dutyDefaultByIds(dEl.value,pEl.value);
+  const dName=(window.DUTY&&dEl.value)?(window.DUTY.departments.find(x=>Number(x.id)===Number(dEl.value))||{}).name:'';
+  const pName=(window.DUTY&&pEl.value)?(window.DUTY.positions.find(x=>Number(x.id)===Number(pEl.value))||{}).name:'';
+  if(t){
+    document.getElementById('uf-pages').innerHTML=pageChipsHtml(new Set(t.pages));
+    document.getElementById('uf-manage').innerHTML=pageChipsHtml(new Set(t.manage));
+    if(hint)hint.innerHTML='权限来源：<span class="tag tag-green">🔐 岗位职责('+esc(dName+'·'+pName)+')</span> '
+      +'<span style="color:var(--text-sub)">已自动套用；如与下面勾选不一致，则以勾选为准（变成账号微调）</span>';
+  }else{
+    applyRoleTemplate();
+    if(hint)hint.innerHTML='权限来源：<span class="tag tag-gray">角色默认</span> '
+      +((dEl.value&&pEl.value)?'<span style="color:var(--text-sub)">（该部门+职务还没配岗位职责，可到「岗位职责」页配）</span>':'');
+  }
+}
 function applyRolePages(){
   const d=roleDefault(document.getElementById('uf-role').value);
   document.getElementById('uf-pages').innerHTML=pageChipsHtml(new Set(d.pages));
@@ -735,24 +786,45 @@ async function editUser(id){
   userFormShell('✏️ 编辑账号 '+esc(r.username)+(r.perm_custom?' <span class="tag tag-warn">已自定义权限</span>':''),id);
   document.getElementById('uf-username').value=r.username;document.getElementById('uf-username').readOnly=true;
   document.getElementById('uf-name').value=r.real_name;
-  document.getElementById('uf-dept').value=r.department||'';
+  if(document.getElementById('uf-dept-id'))document.getElementById('uf-dept-id').value=r.dept_id||'';
+  if(document.getElementById('uf-pos-id'))document.getElementById('uf-pos-id').value=r.position_id||'';
   document.getElementById('uf-role').value=r.role;
   // 工序回填
   (r.station_ids||[]).forEach(sid=>{
     const chip=document.querySelector('#uf-stations .chip[data-id="'+sid+'"]');
     if(chip){chip.classList.add('on');chip.querySelector('input').checked=true}
   });
-  // 权限回填：自定义优先，否则按角色默认
-  const view= r.view_pages!==null&&r.view_pages!==undefined ? r.view_pages : roleDefault(r.role).pages;
-  const mgr= r.manage_modules!==null&&r.manage_modules!==undefined ? r.manage_modules : roleDefault(r.role).manage;
+  // 权限回填：账号自定义 > 岗位职责 > 角色默认
+  const _dd=dutyDefaultByIds(r.dept_id,r.position_id);
+  const view= r.view_pages!==null&&r.view_pages!==undefined ? r.view_pages : (_dd?_dd.pages:roleDefault(r.role).pages);
+  const mgr= r.manage_modules!==null&&r.manage_modules!==undefined ? r.manage_modules : (_dd?_dd.manage:roleDefault(r.role).manage);
+  applyPermHintByIds(r.dept_id,r.position_id,r);
   document.getElementById('uf-pages').innerHTML=pageChipsHtml(new Set(view));
   document.getElementById('uf-manage').innerHTML=pageChipsHtml(new Set(mgr));
+}
+function applyPermHintByIds(deptId,posId,r){
+  const hint=document.getElementById('uf-perm-hint');
+  if(!hint)return;
+  const dd=dutyDefaultByIds(deptId,posId);
+  const dName=deptId?(window.DUTY.departments.find(x=>Number(x.id)===Number(deptId))||{}).name:'';
+  const pName=posId?(window.DUTY.positions.find(x=>Number(x.id)===Number(posId))||{}).name:'';
+  if(r&&r.perm_source==='account'){
+    hint.innerHTML='权限来源：<span class="tag tag-warn">🎯 账号微调</span> '
+      +'<span style="color:var(--text-sub)">该账号单独改过权限（优先于岗位职责）；点"套用岗位职责"可恢复</span>';
+  }else if(dd){
+    hint.innerHTML='权限来源：<span class="tag tag-green">🔐 岗位职责('+esc(dName+'·'+pName)+')</span> '
+      +'<span style="color:var(--text-sub)">按部门+职务自动套用</span>';
+  }else{
+    hint.innerHTML='权限来源：<span class="tag tag-gray">角色默认</span>';
+  }
 }
 async function saveUser(uid){
   const msg=document.getElementById('uf-msg');
   const username=document.getElementById('uf-username').value.trim();
   const name=document.getElementById('uf-name').value.trim();
-  const dept=document.getElementById('uf-dept').value.trim();
+  const deptIdEl=document.getElementById('uf-dept-id'), posIdEl=document.getElementById('uf-pos-id');
+  const deptId=deptIdEl&&deptIdEl.value?Number(deptIdEl.value):null;
+  const posId=posIdEl&&posIdEl.value?Number(posIdEl.value):null;
   const role=document.getElementById('uf-role').value;
   const stIds=collectIds('uf-stations').map(Number);
   const viewPages=collectIds('uf-pages');
@@ -761,13 +833,14 @@ async function saveUser(uid){
   // 管理模块必须是可见页面的子集（防"看不见却可管"）
   const badManage=manage.filter(m=>!viewPages.includes(m));
   if(badManage.length){msg.innerHTML='<div class="alertbar alert-bad">"可管理"勾了看不到的页面：'+esc(badManage.join('、'))+'。请先在"能看哪些页面"里勾上，或取消管理勾选。</div>';return}
-  // 保存为自定义权限（与角色默认不同的部分）。若与角色默认完全一致 → 存 null 回到角色默认
-  const def=roleDefault(role);
+  // 与"岗位职责（或角色默认）"一致 → 存 null（继续保持按岗位/角色走，将来规则改了自动跟随）
+  const dd=dutyDefaultByIds(deptId,posId);
+  const def=dd||roleDefault(role);
   const sortEq=(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
   const viewCustom= !sortEq(viewPages,def.pages) ? viewPages : null;
   const mgrCustom= !sortEq(manage,def.manage) ? manage : null;
-  const body={real_name:name,department:dept,role_key:role,station_ids:stIds,
-    view_pages:viewCustom,manage_modules:mgrCustom};
+  const body={real_name:name,department:'',dept_id:deptId,position_id:posId,
+    role_key:role,station_ids:stIds,view_pages:viewCustom,manage_modules:mgrCustom};
   try{
     if(uid===null){
       body.username=username;body.password=(document.getElementById('uf-pwd').value||'123456');
@@ -790,10 +863,16 @@ async function loadUsers(){
   if(!rows.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-sub);padding:26px">暂无账号</td></tr>';return}
   const stName=id=>{const s=sts.find(x=>x.id===id);return s?s.code+' '+s.name:''};
   const stTag=sid=>'<span class="tag tag-blue" style="margin:1px">'+esc(stName(sid))+'</span>';
-  tbody.innerHTML=rows.map(r=>'<tr><td><b>'+esc(r.username)+'</b></td><td>'+esc(r.real_name)+'</td><td>'+esc(r.department)+'</td>'
-    +'<td><span class="tag tag-blue">'+esc(r.role_name)+'</span></td>'
+  const srcTag=r=>({account:'<span class="tag tag-warn">🎯 账号微调</span>',
+                     duty:'<span class="tag tag-green">🔐 岗位职责</span>',
+                     role:'<span class="tag tag-gray">角色默认</span>'}[r.perm_source]||'<span class="tag tag-gray">角色默认</span>');
+  tbody.innerHTML=rows.map(r=>'<tr><td><b>'+esc(r.username)+'</b></td><td>'+esc(r.real_name)+'</td>'
+    +'<td>'+(r.dept_name?'<span class="tag tag-blue">'+esc(r.dept_name)+'</span> ':'')
+    +(r.position_name?'<span class="tag tag-blue">'+esc(r.position_name)+'</span>':'<span class="tag tag-gray">未设职务</span>')
+    +(r.dept_name||r.position_name?'':'<span style="font-size:12px;color:var(--text-sub)">'+esc(r.department||'')+'</span>')+'</td>'
+    +'<td><span class="tag tag-gray">'+esc(r.role_name)+'</span></td>'
     +'<td>'+(r.station_ids&&r.station_ids.length?r.station_ids.map(stTag).join(''):'<span class="tag tag-gray">未绑定</span>')+'</td>'
-    +'<td>'+(r.perm_custom?'<span class="tag tag-warn">🎯 自定义</span>':'<span class="tag tag-gray">角色默认</span>')+'</td>'
+    +'<td>'+srcTag(r)+'</td>'
     +'<td>'+(r.enabled?'<span class="tag tag-green">正常</span>':'<span class="tag tag-red">停用</span>')+'</td>'
     +'<td><button class="btn btn-o btn-sm" onclick="editUser('+r.id+')">✏️ 编辑</button> '
     +'<button class="btn btn-o btn-sm" onclick="resetPwd('+r.id+',\''+esc(r.username)+'\')">🔑 重置密码</button> '
@@ -1920,6 +1999,132 @@ async function loadBoard(){
         :'<div style="color:#69f0ae;font-size:13px">✔ 所有受控指标均正常</div>')+'</div>'
     +'</div>';
 }
+
+/* ═══════════ 岗位职责（分权责：部门 + 职务 → 模块权限）═══════════ */
+let DUTY=null, DUTY_DEPT='all';
+async function renderDutyPage(){
+  DUTY=await api('/api/duty-matrix');
+  window.DUTY=DUTY;
+  const body='<div class="panel"><div class="searchbar">'
+    +'<span style="font-size:13px">按部门查看：</span>'
+    +'<select id="duty-dept" onchange="DUTY_DEPT=this.value;renderDutyRows()" style="min-width:150px">'
+    +'<option value="all">全部部门</option><option value="none">通用职务（兜底）</option>'
+    +DUTY.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
+    +'<span style="font-size:12px;color:var(--text-sub)">改完即生效：新建/编辑账号选好"部门+职务"就自动套用这里的模块权限</span></div></div>'
+    +'<div class="panel" style="font-size:12.5px">'
+    +'🔎 <b>权限怎么算</b>：账号单独微调 &gt; <b>岗位职责（本页）</b> &gt; 角色默认模板。'
+    +'本页按"部门 + 职务"定规则，是日常维护权限的主入口。</div>'
+    +'<div class="tbl-wrap"><table><thead><tr><th>职务</th><th>部门</th><th>可见模块</th><th>可管模块</th><th>最近修改</th><th>操作</th></tr></thead>'
+    +'<tbody id="duty-body"></tbody></table></div>';
+  document.getElementById('content').innerHTML=pageShell('🔐 岗位职责',
+    '把"什么岗位管什么事"定成规则：每个部门下的每个职务，勾选它能看/能管的模块。',body);
+  renderDutyRows();
+}
+function dutyTpl(deptId,posId){
+  if(!DUTY)return null;
+  const same=(a,b)=>(a===null||a===undefined?null:Number(a))===(b===null||b===undefined?null:Number(b));
+  let t=DUTY.templates.find(x=>same(x.dept_id,deptId)&&same(x.position_id,posId));
+  if(!t&&deptId!==null&&deptId!==undefined)t=DUTY.templates.find(x=>(x.dept_id===null||x.dept_id===undefined)&&same(x.position_id,posId));
+  return t||null;
+}
+function dutyRowsData(){
+  const rows=[];
+  const depts=DUTY.departments;
+  DUTY.positions.forEach(p=>{
+    if(DUTY_DEPT==='all'){
+      const own=depts.map(d=>({dept:d,tpl:DUTY.templates.find(x=>Number(x.dept_id)===Number(d.id)&&Number(x.position_id)===Number(p.id))})).filter(x=>x.tpl);
+      const gen=DUTY.templates.find(x=>(x.dept_id===null||x.dept_id===undefined)&&Number(x.position_id)===Number(p.id));
+      if(own.length)own.forEach(x=>rows.push({pos:p,dept:x.dept,tpl:x.tpl}));
+      else if(gen)rows.push({pos:p,dept:null,tpl:gen});
+    } else if(DUTY_DEPT==='none'){
+      const gen=DUTY.templates.find(x=>(x.dept_id===null||x.dept_id===undefined)&&Number(x.position_id)===Number(p.id));
+      rows.push({pos:p,dept:null,tpl:gen||null});
+    } else {
+      const d=depts.find(x=>Number(x.id)===Number(DUTY_DEPT));
+      if(!d)return;
+      rows.push({pos:p,dept:d,tpl:DUTY.templates.find(x=>Number(x.dept_id)===Number(d.id)&&Number(x.position_id)===Number(p.id))||null});
+    }
+  });
+  return rows;
+}
+function renderDutyRows(){
+  const tbody=document.getElementById('duty-body');
+  if(!tbody)return;
+  const rows=dutyRowsData();
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-sub);padding:24px">该部门下暂无可配置职务</td></tr>';return}
+  tbody.innerHTML=rows.map(r=>{
+    const t=r.tpl;
+    const deptTxt=r.dept?esc(r.dept.name):'<span class="tag tag-gray">通用职务</span>';
+    const viewTxt=t?t.view_pages.length+' 个':'<span class="tag tag-warn">未配置</span>';
+    const mgrTxt=t?t.manage_modules.length+' 个':'—';
+    const who=t?'<span style="font-size:12px;color:var(--text-sub)">'+esc(t.updated_by)+' · '+esc(t.updated_at)+'</span>':'<span style="font-size:12px;color:var(--text-sub)">回落到角色默认模板</span>';
+    const did=r.dept?r.dept.id:'null';
+    return '<tr><td><b>'+esc(r.pos.name)+'</b><br><span style="font-size:11.5px;color:var(--text-sub)">'+esc(r.pos.code)+'</span></td>'
+      +'<td>'+deptTxt+'</td><td>'+viewTxt+'</td><td>'+mgrTxt+'</td><td>'+who+'</td>'
+      +'<td><button class="btn btn-o btn-sm" onclick="dutyEdit('+r.pos.id+','+did+')">✏️ 配置</button>'
+      +(t?' <button class="btn btn-o btn-sm" style="color:var(--bad);border-color:#f5c6cc" onclick="dutyDel('+t.id+',\''+esc(r.pos.name)+'\')">🗑 停用</button>':'')
+      +'</td></tr>';
+  }).join('');
+}
+function dutyEdit(posId,deptId){
+  const pos=(DUTY.positions.find(x=>Number(x.id)===Number(posId))||{});
+  const dept=deptId===null?null:DUTY.departments.find(x=>Number(x.id)===Number(deptId));
+  const t=dutyTpl(deptId,posId);
+  window.DUTY_EDIT={posId:posId,deptId:deptId};
+  const curPageSet=new Set(t?t.view_pages:[]);
+  const curMgrSet=new Set(t?t.manage_modules:[]);
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
+    +'<h3>配置岗位职责：'+esc(dept?dept.name+' · ':'通用职务 · ')+esc(pos.name||'')+'</h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">勾选这个岗位能看/能管的模块。'
+    +(t?'':' 该岗位当前<b>未配置</b>，保存后即以本页规则为准。')+'</div>'
+    +'<div class="perm-sec"><div class="ps-title">👁 能看哪些模块'
+    +'<button class="btn btn-o btn-sm" onclick="dutyFillFrom(\'pages\',\''+esc(pos.code||'')+'\')">套用同类岗位（参考）</button>'
+    +'<span class="ps-desc">至少勾一个</span></div><div id="duty-pages">'+pageChipsHtml(curPageSet)+'</div></div>'
+    +'<div class="perm-sec"><div class="ps-title">🛠️ 能管理（增删改）哪些模块'
+    +'<span class="ps-desc">必须是"能看"的子集</span></div><div id="duty-manage">'+pageChipsHtml(curMgrSet)+'</div></div>'
+    +'<div style="text-align:right"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+    +'<button class="btn btn-p" onclick="dutySave('+posId+','+(deptId===null?'null':deptId)+')">✔ 保存岗位职责</button></div>'
+    +'<div id="duty-msg"></div>';
+  document.getElementById('modal-mask').classList.add('show');
+}
+function dutyFillFrom(kind,posCode){
+  // 参考"同名职务在其它部门/通用职务"的配置，快速铺一遍（排除正在编辑的这条）
+  const cur=window.DUTY_EDIT||{};
+  const same=(a,b)=>(a===null||a===undefined?null:Number(a))===(b===null||b===undefined?null:Number(b));
+  const posId=(DUTY.positions.find(p=>p.code===posCode)||{}).id;
+  const peer=DUTY.templates.find(x=>Number(x.position_id)===Number(posId)
+    && !(same(x.dept_id,cur.deptId))
+    && (x.view_pages||[]).length);
+  if(!peer){toast('没有可参考的同类岗位配置，请直接勾选');return}
+  if(kind==='pages')document.getElementById('duty-pages').innerHTML=pageChipsHtml(new Set(peer.view_pages));
+  else document.getElementById('duty-manage').innerHTML=pageChipsHtml(new Set(peer.manage_modules));
+}
+async function dutySave(posId,deptId){
+  const msg=document.getElementById('duty-msg');
+  const pages=collectIds('duty-pages');
+  const mgs=collectIds('duty-manage');
+  if(!pages.length){msg.innerHTML='<div class="alertbar alert-bad">至少要勾一个"能看"的模块</div>';return}
+  const bad=mgs.filter(m=>!pages.includes(m));
+  if(bad.length){
+    msg.innerHTML='<div class="alertbar alert-bad">"能管理"里有看不到的模块：'+esc(bad.join('、'))+'，请先勾上可见或取消管理</div>';return;
+  }
+  try{
+    await api('/api/duty-templates',{method:'POST',body:JSON.stringify({
+      dept_id:deptId,position_id:posId,view_pages:pages,manage_modules:mgs})});
+    closeModal();
+    toast('✔ 岗位职责已保存，相关账号下次登录即按新规则');
+    DUTY=await api('/api/duty-matrix');window.DUTY=DUTY;
+    renderDutyRows();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+async function dutyDel(tid,name){
+  if(!confirm('停用「'+name+'」的这条岗位职责？停用后该岗位将回落到角色默认模板。'))return;
+  try{await api('/api/duty-templates/'+tid,{method:'DELETE'});toast('✔ 已停用');
+    DUTY=await api('/api/duty-matrix');window.DUTY=DUTY;renderDutyRows()}
+  catch(e){toast('✘ '+e.message)}
+}
+
 /* ═══════════ 启动 ═══════════ */
 if(!autoLogin())showLogin();
 </script>
