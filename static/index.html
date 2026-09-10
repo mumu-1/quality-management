@@ -1587,19 +1587,42 @@ async function submitProdTest(pid,stdId,ctype,stage){
 
 // ── 成品报告 COA ──
 function coaShell(){
-  return '<div class="tbl-wrap"><table><thead><tr><th>COA 编号</th><th>生产批号</th><th>产品</th><th>客户</th><th>签发人/日期</th><th>操作</th></tr></thead><tbody id="tbody-coa"></tbody></table></div>'
+  return '<div class="tbl-wrap"><table><thead><tr><th>COA 编号</th><th>生产批号</th><th>产品</th><th>客户</th><th>签发人/日期</th><th>操作</th><th>客户链接（🔒 含口令）</th></tr></thead><tbody id="tbody-coa"></tbody></table></div>'
     +'<div class="panel" style="font-size:12.5px;color:var(--text-sub)">💡 只有成品检验合格的批次才会出现在这里（放行控制）。点"查看"可预览报告并打印；二维码供客户扫码查看。</div>';
 }
 async function loadCoas(){
   const rows=await api('/api/coas');
   const tb=document.getElementById('tbody-coa');
-  if(!rows.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-sub);padding:26px">还没有成品报告——成品检验合格后自动生成</td></tr>';return}
+  if(!rows.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-sub);padding:26px">还没有成品报告——成品检验合格后自动生成</td></tr>';return}
   tb.innerHTML=rows.map(r=>'<tr>'
     +'<td><span class="tag tag-green">'+esc(r.coa_no)+'</span></td>'
     +'<td style="font-size:11.5px">'+esc(r.lot_no)+'</td><td><b>'+esc(r.material_name)+'</b></td>'
     +'<td>'+esc(r.customer_name)+'</td><td style="font-size:12px;color:var(--text-sub)">'+esc(r.issued_by)+'<br>'+esc(r.created_at)+'</td>'
-    +'<td><button class="btn btn-o btn-sm" onclick="showCoa('+r.id+')">👁 查看/打印</button> '
-    +'<a class="btn btn-o btn-sm" href="/coa/'+esc(r.coa_no)+'" target="_blank">🔗 公开页</a></td></tr>').join('');
+    +'<td><button class="btn btn-o btn-sm" onclick="showCoa('+r.id+')">👁 查看/打印</button></td>'
+    +'<td style="white-space:nowrap"><button class="btn btn-p btn-sm" onclick="coaCopyLink('+r.id+')">📋 复制客户链接</button> '
+    +(canManage('prodlot')?'<button class="btn btn-o btn-sm" onclick="coaRotate('+r.id+')" title="旧链接立即失效">🔁 重置口令</button>':'')+'</td></tr>').join('');
+}
+function copyText(t){
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).catch(()=>{});return;}
+  const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(e){}ta.remove();
+}
+async function coaCopyLink(id){
+  try{
+    const lk=await api('/api/coas/'+id+'/link');
+    copyText(lk.url);
+    toast('✔ 客户链接已复制（含口令，请发给对应客户）');
+    if(window.__lastCoaLink)window.__lastCoaLink.value=lk.url;
+  }catch(e){toast('✘ '+e.message)}
+}
+async function coaRotate(id){
+  if(!confirm('重置后【旧链接立即失效】，需要把新链接重新发给客户。\n确定要重置口令吗？'))return;
+  try{
+    const lk=await api('/api/coas/'+id+'/rotate-key',{method:'POST',body:'{}'});
+    copyText(lk.url);
+    toast('✔ 已重置口令并复制新链接（旧链接已失效）');
+    loadCoas();
+  }catch(e){toast('✘ '+e.message)}
 }
 async function showCoa(cid){
   let d;
@@ -1611,6 +1634,8 @@ async function showCoa(cid){
     rows+='<tr><td>'+esc(it.indicator)+'</td><td>'+(lim||'—')+'</td><td><b>'+esc(it.actual)+'</b> '+esc(it.unit||'')+'</td>'
       +'<td class="'+(it.pass===1?'res-pass':'res-fail')+'" style="font-weight:600">'+(it.pass===1?'合格':'不合格')+'</td></tr>';
   });
+  let coaUrl='',coaKey='';
+  try{const lk=await api('/api/coas/'+cid+'/link');coaUrl=lk.url||'';coaKey=lk.key||''}catch(e){}
   box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
     +'<h3>📄 成品质量检验报告（COA）</h3>'
     +'<div style="display:flex;gap:20px;align-items:flex-start">'
@@ -1620,10 +1645,13 @@ async function showCoa(cid){
     +'生产批号：<b style="font-size:12px">'+esc(d.lot_no)+'</b>　数量：'+d.qty+' '+esc(d.unit)+'<br>客户：<b>'+esc(d.customer_name)+'</b></div>'
     +'<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>检验项目</th><th>标准</th><th>实测</th><th>判定</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     +'</div>'
-    +'<div style="text-align:center"><img src="/api/public/coa/'+encodeURIComponent(d.coa_no)+'/qr.svg" style="width:130px;height:130px;border:1px solid #e3ecf6;border-radius:8px;padding:6px;background:#fff"><div style="font-size:11px;color:var(--text-sub);margin-top:4px">客户扫码查看</div></div>'
+    +'<div style="text-align:center"><img src="/api/public/coa/'+encodeURIComponent(d.coa_no)+'/qr.svg?k='+encodeURIComponent(coaKey)+'" style="width:130px;height:130px;border:1px solid #e3ecf6;border-radius:8px;padding:6px;background:#fff"><div style="font-size:11px;color:var(--text-sub);margin-top:4px">客户扫码查看</div></div>'
     +'</div>'
+    +'<div class="panel" style="margin-top:10px;font-size:12px;background:#f7fbff">🔒 <b>客户链接（含口令，只发对应客户）</b>：<span style="color:var(--text-sub);word-break:break-all">'+esc(coaUrl||'（获取失败，请刷新重试）')+'</span>'
+    +(canManage('prodlot')?' <button class="btn btn-o btn-sm" onclick="coaRotate('+cid+')">🔁 重置口令</button>':'')+'</div>'
     +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">关闭</button> '
-    +'<a class="btn btn-p" href="/coa/'+esc(d.coa_no)+'" target="_blank">🖨 打开打印页</a></div>';
+    +'<button class="btn btn-p" onclick="coaCopyLink('+cid+')">📋 复制客户链接</button> '
+    +'<a class="btn btn-o" href="'+esc(coaUrl||('#'+''))+'" target="_blank">🖨 打开打印页</a></div>';
   document.getElementById('modal-mask').classList.add('show');
 }
 async function showCoaByNo(coaNo){

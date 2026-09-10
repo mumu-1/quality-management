@@ -379,7 +379,8 @@ class Coa(Base):
     prod_id = Column(Integer, ForeignKey("production_lot.id"), nullable=False, index=True)
     customer_id = Column(Integer, ForeignKey("customer.id"), nullable=True)  # 空=按通用成品标准
     test_id = Column(Integer, nullable=True)          # 来源 OQC 检验单
-    items_json = Column(Text, default="[]")           # 检验明细快照
+    items_json = Column(Text, default="[]")
+    access_key = Column(String(64), default="", index=True)   # 客户链接口令（防止链接被随意转发查看）           # 检验明细快照
     result = Column(Integer, default=1)               # 1合格
     issued_by = Column(String(50), default="")
     created_at = Column(DateTime, default=datetime.now)

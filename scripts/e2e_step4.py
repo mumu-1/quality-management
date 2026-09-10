@@ -159,13 +159,21 @@ check("COA 产品/批号正确", cd.get("material_name") == "电池级磷酸铁"
 fg_after = call("GET", "/api/fg-available", token=AT)
 check("成品合格批进入放行列表", any(f["id"] == fg_b["id"] for f in fg_after))
 
-print("══ 3. 公开 COA 页 + 二维码（客户扫码，无需登录）══")
+print("══ 3. 公开 COA 页 + 二维码（客户扫码：需链接口令，方案A 客户隔离）══")
 if mycoa:
-    html = call("GET", f"/coa/{mycoa['coa_no']}", raw=True)
-    check("公开页可访问且含报告编号", mycoa["coa_no"] in html and "检验项目" in html, f"{len(html)} 字符")
-    qr = call("GET", f"/api/public/coa/{mycoa['coa_no']}/qr.svg", raw=True)
-    check("二维码 SVG 可生成", "svg" in qr[:200].lower() and len(qr) > 500, f"{len(qr)} 字节")
-    check("二维码内容为相对路径", f"/coa/{mycoa['coa_no']}" in qr or True, "（SVG 内路径已编码）")
+    cl = call("GET", "/api/coas", token=AT)
+    row = next((x for x in cl if x["coa_no"] == mycoa["coa_no"]), {})
+    ck = row.get("access_key", "")
+    check("COA 列表带客户链接口令", bool(ck), f"{ck[:8]}…" if ck else "空")
+    nokey = call("GET", f"/coa/{mycoa['coa_no']}", raw=True)
+    check("★ 不带口令访问被拒（客户隔离）",
+          mycoa["coa_no"] not in nokey or "链接无效" in nokey, f"{len(nokey)} 字符")
+    html = call("GET", f"/coa/{mycoa['coa_no']}?k={ck}", raw=True)
+    check("带口令公开页可访问且含报告编号", mycoa["coa_no"] in html and "检验项目" in html, f"{len(html)} 字符")
+    qr0 = call("GET", f"/api/public/coa/{mycoa['coa_no']}/qr.svg", raw=True)
+    check("★ 二维码无口令被拒", not ("svg" in qr0[:200].lower() and len(qr0) > 500), f"{len(qr0)} 字节")
+    qr = call("GET", f"/api/public/coa/{mycoa['coa_no']}/qr.svg?k={ck}", raw=True)
+    check("带口令二维码 SVG 可生成", "svg" in qr[:200].lower() and len(qr) > 500, f"{len(qr)} 字节")
 
 print("══ 4. 不合格冻结 → 禁止流入下工序（拦截验证）══")
 bad_b = build("ST03", p1["lot_no"], 10.0)

@@ -893,6 +893,20 @@ def seed_complaints(db):
     print(f"✔ 客诉演示数据: {len(rows)} 条（已关闭1 / 调查中1 / 待受理1）")
 
 
+
+def seed_coa_keys(db):
+    """给历史 COA 补客户链接口令（幂等）：老库升级后原有报告也能用口令链接"""
+    db.flush()
+    n = 0
+    for c in db.query(Coa).all():
+        if not c.access_key:
+            c.access_key = secrets.token_hex(16)
+            n += 1
+    if n:
+        db.commit()
+    print(f"✔ COA 客户链接口令: 本次补齐 {n} 张（共 {db.query(Coa).count()} 张）")
+
+
 def seed():
     ensure_schema()
     db = SessionLocal()
@@ -907,6 +921,7 @@ def seed():
             seed_production(db)
             seed_history(db)
             seed_complaints(db)
+            seed_coa_keys(db)
             print("DB 已有基础数据，完成增量补种")
             return
 
@@ -1037,6 +1052,8 @@ def seed():
         seed_history(db)
         # ═══ 第三批：客诉演示数据 ═══
         seed_complaints(db)
+        # ═══ 第四批：COA 客户链接口令 ═══
+        seed_coa_keys(db)
     finally:
         db.close()
 

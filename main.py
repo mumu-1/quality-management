@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -1481,7 +1481,7 @@ def _issue_coa(db, prod_lot, test_id, customer_id, username):
     coa_no = _next_no(db, M.Coa, "coa_no", f"COA-{today}-")
     db.add(M.Coa(coa_no=coa_no, prod_id=prod_lot.id, customer_id=customer_id,
                  test_id=test_id, items_json=json.dumps(snap, ensure_ascii=False),
-                 result=1, issued_by=username))
+                 result=1, issued_by=username, access_key=secrets.token_hex(16)))
     return coa_no
 
 
@@ -1496,7 +1496,7 @@ def coa_list(token: str = Header(""), db: Session = Depends(get_db)):
         p = db.get(M.ProductionLot, c.prod_id)
         mat = db.get(M.Material, p.material_id) if p and p.material_id else None
         cust = db.get(M.Customer, c.customer_id) if c.customer_id else None
-        out.append({"id": c.id, "coa_no": c.coa_no,
+        out.append({"id": c.id, "coa_no": c.coa_no, "access_key": c.access_key,
                     "prod_id": c.prod_id, "lot_no": p.lot_no if p else "",
                     "material_name": mat.name if mat else "",
                     "customer_name": cust.name if cust else "（通用）",
@@ -2096,30 +2096,87 @@ th{{background:#f2f7fd;font-weight:600;color:#3d5a7a}}
 </div>
 <table><thead><tr><th>检验项目</th><th>标准要求</th><th>实测结果</th><th>判定</th></tr></thead>
 <tbody>{rows}</tbody></table>
-<div class="qr"><img src="/api/public/coa/{c.coa_no}/qr.svg" alt="扫码查看"><div style="font-size:11px;color:#8595a8;margin-top:4px">扫码查看本报告</div></div>
+<div class="qr"><img src="/api/public/coa/{c.coa_no}/qr.svg?k={c.access_key}" alt="扫码查看"><div style="font-size:11px;color:#8595a8;margin-top:4px">扫码查看本报告</div></div>
 <div class="foot">本报告由生产质量管理系统自动生成，数据来源于成品检验（OQC）原始记录</div>
 </div></body></html>"""
 
 
 @app.get("/coa/{coa_no}", response_class=HTMLResponse)
-def coa_public(coa_no: str, db: Session = Depends(get_db)):
-    """客户扫码公开展示页（无需登录）"""
+def coa_public(coa_no: str, k: str = "", db: Session = Depends(get_db)):
+    """客户扫码公开展示页（无需登录，但需要链接里的随机口令 k）
+    方案A：只把带口令的链接发给对应客户，防止链接被随意转发/枚举查看"""
     c = db.query(M.Coa).filter(M.Coa.coa_no == coa_no).first()
     if not c:
-        return HTMLResponse("<h3 style=\"font-family:sans-serif;color:#c92a3d\">报告不存在或已作废</h3>", status_code=404)
+        return HTMLResponse(_coa_err_html("报告不存在或已作废"), status_code=404)
+    if not c.access_key or c.access_key != (k or "").strip():
+        return HTMLResponse(_coa_err_html(
+            "链接无效或已更新<br><span style=\"font-size:13px;color:#6b7c93\">"
+            "请向业务员/质量部索取最新链接（旧链接在重置后会失效）</span>"), status_code=403)
     return HTMLResponse(_coa_public_html(db, c))
 
 
+def _coa_err_html(msg):
+    return ("<html><head><meta charset='utf-8'><title>无法查看报告</title></head>"
+            "<body style=\"font-family:-apple-system,'Microsoft YaHei',sans-serif;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f4f8fc\">"
+            "<div style=\"text-align:center;color:#2b3b52;background:#fff;border:1px solid #e3ecf6;"
+            "border-radius:12px;padding:28px 34px\"><div style=\"font-size:34px\">🔒</div>"
+            f"<h3 style=\"margin:10px 0\">{msg}</h3></div></body></html>")
+
+
 @app.get("/api/public/coa/{coa_no}/qr.svg")
-def coa_qr(coa_no: str, db: Session = Depends(get_db)):
-    """COA 二维码（内容=相对路径，客户扫码后由部署域名解析）"""
+def coa_qr(coa_no: str, k: str = "", request: Request = None, db: Session = Depends(get_db)):
+    """COA 二维码：内容=带口令的完整地址（手机扫码直接打开并校验口令）"""
     import qrcode
     import qrcode.image.svg
-    img = qrcode.make(f"/coa/{coa_no}", image_factory=qrcode.image.svg.SvgPathImage,
-                      box_size=10, border=1)
+    c = db.query(M.Coa).filter(M.Coa.coa_no == coa_no).first()
+    if not c or not c.access_key or c.access_key != (k or "").strip():
+        raise HTTPException(403, "链接口令无效")
+    base = str(request.base_url).rstrip("/") if request is not None else ""
+    url = f"{base}/coa/{coa_no}?k={c.access_key}"
+    img = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=1)
     buf = io.BytesIO()
     img.save(buf)
-    return Response(content=buf.getvalue(), media_type="image/svg+xml")
+    return Response(content=buf.getvalue(), media_type="image/svg+xml",
+                    headers={"X-QMS-URL": url})
+
+
+def _coa_link(request, c):
+    base = str(request.base_url).rstrip("/") if request is not None else ""
+    return f"{base}/coa/{c.coa_no}?k={c.access_key}"
+
+
+@app.get("/api/coas/{cid}/link")
+def coa_link(cid: int, request: Request = None, token: str = Header(""),
+             db: Session = Depends(get_db)):
+    """内部：取某张 COA 的客户链接（发客户用）"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    c = db.get(M.Coa, cid)
+    if not c:
+        raise HTTPException(404, "报告不存在")
+    if not c.access_key:
+        c.access_key = secrets.token_hex(16)
+        db.commit()
+    return {"ok": True, "coa_no": c.coa_no, "key": c.access_key,
+            "url": _coa_link(request, c)}
+
+
+@app.post("/api/coas/{cid}/rotate-key")
+def coa_rotate_key(cid: int, request: Request = None, token: str = Header(""),
+                   db: Session = Depends(get_db)):
+    """重置客户链接口令（质量经理/管理员）：旧链接立即失效，返回新链接"""
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    _require_action(u, ["admin", "qm"])
+    c = db.get(M.Coa, cid)
+    if not c:
+        raise HTTPException(404, "报告不存在")
+    c.access_key = secrets.token_hex(16)
+    db.commit()
+    audit(db, u.username, "update", f"coa:{c.coa_no}", "重置客户链接口令（旧链接失效）")
+    db.commit()
+    return {"ok": True, "coa_no": c.coa_no, "key": c.access_key, "url": _coa_link(request, c)}
 
 # ═══════════════════════ 数据大屏（管理层，第6步增强）═══════════════════════
 @app.get("/api/board")
