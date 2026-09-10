@@ -1127,6 +1127,8 @@ def _prod_out(db, p):
         .order_by(M.TestRecord.id.desc()).first()
     ncr = db.query(M.Ncr).filter(M.Ncr.prod_id == p.id).order_by(M.Ncr.id.desc()).first()
     return {
+        "pending_dept": p.pending_dept or 0,
+
         "id": p.id, "lot_no": p.lot_no,
         "station_id": p.station_id,
         "station_name": st.name if st else "",

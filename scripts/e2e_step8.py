@@ -196,6 +196,26 @@ check("NCR 摘要标注来源=质检部", "质检部" in (rd.get("fail_summary")
 check("质检后开单会写进不合格列表",
       any(x["ncr_no"] == rd.get("ncr_no") for x in call("GET", "/api/ncr", t=AT)))
 
+print("══ 7. 界面（第二批）══")
+import urllib.request as _u
+with _u.urlopen(BASE + "/") as _r:
+    _ps = _r.read().decode("utf-8", "ignore")
+ui = [
+    ("标准库指标行可配检测方（下拉）", 'class="cb"' in _ps),
+    ("提交标准时带 check_by", "check_by:cb?cb.value:'dept'" in _ps),
+    ("编辑标准回填检测方", 'is_key:it.is_key,check_by:it.check_by' in _ps),
+    ("检验录入分『车间自检』块", "🖐 车间自检（车间现场录）" in _ps),
+    ("检验录入分『质检部检测』块", "🔬 质检部检测（化验室录）" in _ps),
+    ("分块提交按钮（自检/质检）", "✔ 提交车间自检" in _ps and "✔ 提交质检部检测" in _ps),
+    ("提交时带 stage 参数", "stage:stage,items:items" in _ps),
+    ("只收集本块录入值", 'item-row[data-by="' + "'+stage+'" + '"]' in _ps),
+    ("批次列表显示⏳待质检标记", "⏳ 可流转·待质检" in _ps),
+    ("待质检时质检员有录入入口", "🔬 质检录入" in _ps),
+    ("车间角色可发起过程检验", "canSelf=['admin','qm','prodlead','worker']" in _ps),
+]
+for name, ok in ui:
+    check(name, ok)
+
 print()
 print(f"════ 结果: {len(PASS)} 通过 / {len(FAIL)} 失败 ════")
 if FAIL:

@@ -1028,6 +1028,9 @@ function itemRowHtml(it){
     +'<input placeholder="≥下限" type="number" step="any" value="'+esc(v('min_val'))+'" style="width:80px">'
     +'<input placeholder="≤上限" type="number" step="any" value="'+esc(v('max_val'))+'" style="width:80px">'
     +'<span style="display:flex;gap:4px;align-items:center"><label style="font-size:11px;color:var(--text-sub);white-space:nowrap"><input type="checkbox" class="ik">关键</label>'
+    +'<select class="cb" title="谁来测这个指标" style="height:26px;font-size:11.5px;border:1px solid #d6e4f3;border-radius:6px">'
+    +'<option value="dept"'+(v('check_by')==='dept'||!v('check_by')?' selected':'')+'>🔬 质检部</option>'
+    +'<option value="self"'+(v('check_by')==='self'?' selected':'')+'>🖐 车间自检</option></select>'
     +'<button class="btn btn-o btn-sm" onclick="this.closest(\'.item-row\').remove()">✕</button></span>';
 }
 function collectStdItems(containerId){
@@ -1037,9 +1040,11 @@ function collectStdItems(containerId){
     const inp=r.querySelectorAll('input');
     const indicator=inp[0].value.trim();
     if(!indicator)return;
+    const cb=r.querySelector('.cb');
     items.push({indicator:indicator,unit:inp[1].value.trim(),
       min_val:inp[2].value===''?null:Number(inp[2].value),
       max_val:inp[3].value===''?null:Number(inp[3].value),
+      check_by:cb?cb.value:'dept',
       is_key:r.querySelector('.ik').checked?1:0});
   });
   return items;
@@ -1062,7 +1067,7 @@ async function saveStdCreate(){
 // ── 维护检验项（编辑）──
 async function showStdEdit(sid){
   const det=await api('/api/qc-standards/'+sid);
-  const itemsHtml=det.items.map(it=>'<div class="item-row" data-id="'+it.id+'">'+itemRowHtml({indicator:it.indicator,unit:it.unit,min_val:it.min_val,max_val:it.max_val,method:it.method,is_key:it.is_key})+ '</div>').join('');
+  const itemsHtml=det.items.map(it=>'<div class="item-row" data-id="'+it.id+'">'+itemRowHtml({indicator:it.indicator,unit:it.unit,min_val:it.min_val,max_val:it.max_val,method:it.method,is_key:it.is_key,check_by:it.check_by})+ '</div>').join('');
   const box=document.getElementById('modal-box');
   box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span><h3>✏️ 维护检验项 · '+esc(det.std_no)+' '+esc(det.name)+' <span class="tag tag-blue">v'+det.version+'</span></h3>'
     +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">适用于：'+esc(det.object_name)+' · '+CT_NAMES[det.check_type]+'。修改自动留痕。</div>'
@@ -1420,14 +1425,17 @@ async function loadProdlots(){
   const tb=document.getElementById('tbody-prod');
   if(!rows.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-sub);padding:26px">暂无生产批次——点右上角"完工建批"开始一炉</td></tr>';return}
   const mine=ME.role;
-  const canTest=['admin','qm','qc'].includes(mine);
+  const canSelf=['admin','qm','prodlead','worker'].includes(mine);   // 车间自检
+  const canDept=['admin','qm','qc'].includes(mine);                   // 质检部检测
   tb.innerHTML=rows.map(r=>{
     let ops='';
-    if(r.status===1)ops=canTest?'<button class="btn btn-p btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'ipqc\')">🧪 过程检验</button>':'<span class="tag tag-gray">待检验</span>';
-    else if(r.status===4)ops=canTest?'<button class="btn btn-s btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'oqc\')">🏅 成品检验</button>':'<span class="tag tag-gray">待成品检验</span>';
+    if(r.status===1)ops=(canSelf||canDept)?'<button class="btn btn-p btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'ipqc\')">🧪 过程检验'+(canDept?'':'（自检）')+'</button>':'<span class="tag tag-gray">待检验</span>';
+    else if(r.status===4)ops=canDept?'<button class="btn btn-s btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'oqc\')">🏅 成品检验</button>':'<span class="tag tag-gray">待成品检验</span>';
     else if(r.status===5)ops=(r.coa_no?'<button class="btn btn-o btn-sm" onclick="showCoaByNo(\''+esc(r.coa_no)+'\')">📄 COA报告</button> ':'')+'<span class="tag tag-green">✔ 已放行</span>';
     else if(r.status===3||r.status===6)ops='<span class="tag tag-red">'+(r.ncr_no?'已冻结·'+esc(r.ncr_no):'已冻结')+'</span> <button class="btn btn-o btn-sm" onclick="openPage(\'ncr\')">去处置</button>';
-    else if(r.status===2)ops='<span class="tag tag-green">✔ 可流入下工序</span>';
+    else if(r.status===2)ops=r.pending_dept
+      ?'<span class="tag tag-warn">⏳ 可流转·待质检</span> '+(canDept?'<button class="btn btn-o btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'ipqc\')">🔬 质检录入</button>':'')
+      :'<span class="tag tag-green">✔ 可流入下工序</span>';
     return '<tr><td><span class="tag tag-blue" style="font-size:11px">'+esc(r.lot_no)+'</span>'
       +(r.parent_lot_no?'<div style="font-size:11px;color:var(--text-sub)">父批: '+esc(r.parent_lot_no)+'</div>':'')+'</td>'
       +'<td><b>'+esc(r.station_name)+'</b><div style="font-size:11px;color:var(--text-sub)">'+esc(r.station_code)+'</div></td>'
@@ -1495,37 +1503,56 @@ async function saveProd(){
   }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
 }
 
-// ── 过程/成品检验录入（复用实时判定）──
+// ── 过程/成品检验录入（第二批：一张单分两块 自检 / 质检部）──
 async function openProdTest(pid,lotNo,ctype){
   let form;
   try{form=await api('/api/production-lots/'+pid+'/test-form?check_type='+ctype)}
   catch(e){toast('✘ '+e.message);return}
   const title=ctype==='ipqc'?'🧪 过程检验':'🏅 成品检验';
   const box=document.getElementById('modal-box');
-  let itemsHtml='';
-  form.items.forEach((it,i)=>{
-    const lim=(it.min_val!=null||it.max_val!=null)
-      ?'<span style="color:var(--text-sub);font-size:11px">标准：'+(it.min_val!=null?'≥'+it.min_val:'')+(it.max_val!=null?' ≤'+it.max_val:'')+(it.unit?(' '+it.unit):'')+'</span>':'';
-    itemsHtml+='<div class="item-row" style="grid-template-columns:1.3fr 1.2fr .9fr 1fr">'
-      +'<div><b>'+esc(it.indicator)+'</b>'+(it.is_key?' <span class="tag tag-warn" style="font-size:10px">关键</span>':'')+'</div>'
-      +'<div style="font-size:12px;color:var(--text-sub)">'+lim+'<br>方法:'+esc(it.method||'—')+'</div>'
-      +'<input data-i="'+i+'" placeholder="实测值" oninput="liveJudge(this,'+i+')" style="width:90px">'
-      +'<div><span class="res res-wait" id="judge-'+i+'">⏳</span></div></div>';
-  });
+  form.items.forEach((it,i)=>{it.__i=i});
+  const hasSelf=(form.self_count||0)>0, hasDept=(form.dept_count||0)>0;
+  const block=(by,list,editable,label,tagcls,done)=>{
+    if(!list.length)return '';
+    let h='<div style="font-weight:600;margin:12px 0 4px;font-size:13px">'+label
+      +' <span class="tag '+tagcls+'">'+list.length+' 项</span>'
+      +(done?' <span class="tag tag-green">已录入</span>':'')
+      +(editable?'':' <span class="tag tag-gray">只读</span>')+'</div>';
+    list.forEach(it=>{
+      const lim=(it.min_val!=null||it.max_val!=null)
+        ?'<span style="color:var(--text-sub);font-size:11px">标准：'+(it.min_val!=null?'≥'+it.min_val:'')+(it.max_val!=null?' ≤'+it.max_val:'')+(it.unit?(' '+it.unit):'')+'</span>':'';
+      h+='<div class="item-row" data-by="'+by+'" style="grid-template-columns:1.3fr 1.2fr .9fr 1fr">'
+        +'<div><b>'+esc(it.indicator)+'</b>'+(it.is_key?' <span class="tag tag-warn" style="font-size:10px">关键</span>':'')+'</div>'
+        +'<div style="font-size:12px;color:var(--text-sub)">'+lim+'<br>方法:'+esc(it.method||'—')+'</div>'
+        +'<input data-i="'+it.__i+'" '+(editable?'':'disabled ')+'placeholder="实测值" oninput="liveJudge(this,'+it.__i+')" style="width:90px">'
+        +'<div><span class="res res-wait" id="judge-'+it.__i+'">⏳</span></div></div>';
+    });
+    return h;
+  };
+  const selfItems=form.items.filter(x=>x.check_by==='self');
+  const deptItems=form.items.filter(x=>x.check_by==='dept');
+  let btns='<button class="btn btn-o" onclick="closeModal()">取消</button> ';
+  if(hasSelf&&form.can_self&&!form.self_done)btns+='<button class="btn btn-p" onclick="submitProdTest('+pid+','+form.std_id+',\''+ctype+'\',\'self\')">✔ 提交车间自检</button> ';
+  if(hasSelf&&form.self_done)btns+='<span class="tag tag-green" style="margin-left:6px">🖐 自检已录</span> ';
+  if(hasDept&&form.can_dept&&!form.dept_done)btns+='<button class="btn btn-p" onclick="submitProdTest('+pid+','+form.std_id+',\''+ctype+'\',\'dept\')">✔ 提交质检部检测</button> ';
+  if(hasDept&&form.dept_done)btns+='<span class="tag tag-green" style="margin-left:6px">🔬 质检已录</span> ';
   box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
     +'<h3>'+title+' · 批号 '+esc(lotNo)+'</h3>'
-    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">按标准 <b>'+esc(form.std_no+' '+form.std_name)+'</b> 自动带出 '+form.items.length+' 项。'
-    +(ctype==='oqc'?'成品检验合格后将自动生成 COA 报告。':'过程检验不合格该批将冻结，禁止流入下工序。')+'</div>'
-    +'<div id="test-items"></div>'
-    +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
-    +'<button class="btn btn-p" onclick="submitProdTest('+pid+','+form.std_id+',\''+ctype+'\')">✔ 提交检验</button></div>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:4px">按标准 <b>'+esc(form.std_no+' '+form.std_name)+'</b> 自动带出 '+form.items.length+' 项。'
+    +(hasSelf&&hasDept?'<b>自检合格即可先流转</b>；质检部结果若不合格，该批自动冻结并开不合格单。'
+      :(hasDept?'该工序全部由质检部检测；不合格将冻结该批。':'该工序全部由车间自检；不合格将冻结该批。'))
+    +(form.test_no?'<br>本单号：<b>'+esc(form.test_no)+'</b>':'')+'</div>'
+    +'<div id="test-items">'
+    +block('self',selfItems,form.can_self&&!form.self_done,'🖐 车间自检（车间现场录）','tag-blue',form.self_done)
+    +block('dept',deptItems,form.can_dept&&!form.dept_done,'🔬 质检部检测（化验室录）','tag-green',form.dept_done)
+    +'</div>'
+    +'<div style="text-align:right;margin-top:12px">'+btns+'</div>'
     +'<div id="test-msg" style="margin-top:10px"></div>';
-  document.getElementById('test-items').innerHTML=itemsHtml;
   window.__testForm=form;
   document.getElementById('modal-mask').classList.add('show');
 }
-async function submitProdTest(pid,stdId,ctype){
-  const rows=document.querySelectorAll('#test-items .item-row');
+async function submitProdTest(pid,stdId,ctype,stage){
+  const rows=document.querySelectorAll('#test-items .item-row[data-by="'+stage+'"]');
   const items=[];
   rows.forEach(r=>{
     const name=r.querySelector('b').textContent.replace('关键','').trim();
@@ -1534,16 +1561,25 @@ async function submitProdTest(pid,stdId,ctype){
   });
   const msg=document.getElementById('test-msg');
   if(!items.length){msg.innerHTML='<div class="alertbar alert-bad">请至少录入一个实测值</div>';return}
+  const who=stage==='self'?'车间自检':'质检部检测';
   try{
-    const r=await api('/api/production-lots/'+pid+'/test',{method:'POST',body:JSON.stringify({std_id:stdId,check_type:ctype,items})});
-    if(r.result===1){
-      if(ctype==='oqc'){msg.innerHTML='<div class="alertbar alert-ok">✔ 成品检验<b>合格</b> —— COA 报告已生成，该批可放行发货。</div>';toast('✔ 成品合格，已出 COA');}
-      else{msg.innerHTML='<div class="alertbar alert-ok">✔ 过程检验<b>合格</b> —— 该批可流入下工序（下工序建批时可选它为父批）。</div>';toast('✔ 过程合格');}
-    }else{
-      msg.innerHTML='<div class="alertbar alert-bad">✘ 检验<b>不合格</b> —— 批次已冻结，自动生成 <b>'+esc(r.ncr_no)+'</b>，禁止流入下工序。<br><span style="font-size:12px">'+esc(r.fail_summary)+'</span></div>';
+    const r=await api('/api/production-lots/'+pid+'/test',{method:'POST',
+      body:JSON.stringify({std_id:stdId,check_type:ctype,stage:stage,items:items})});
+    if(r.result===2){
+      msg.innerHTML='<div class="alertbar alert-bad">✘ '+who+'<b>不合格</b> —— 批次已冻结，自动生成 <b>'+esc(r.ncr_no)+'</b>，禁止流入下工序。<br><span style="font-size:12px">'+esc(r.fail_summary)+'</span></div>';
       toast('✘ 不合格，已冻结并开 NCR '+r.ncr_no);
+    }else if(r.pending_dept===1){
+      msg.innerHTML='<div class="alertbar alert-ok">✔ '+who+'<b>合格</b>，该批可先流入下工序；<b>质检部检测待录入</b>（质检不合格会自动冻结）。</div>';
+      toast('✔ 自检合格（待质检确认）');
+    }else if(r.result===1){
+      msg.innerHTML=ctype==='oqc'
+        ?'<div class="alertbar alert-ok">✔ 成品检验<b>合格</b> —— COA 报告已生成，该批可放行发货。</div>'
+        :'<div class="alertbar alert-ok">✔ 检验<b>合格</b> —— 该批可流入下工序（下工序建批时可选它为父批）。</div>';
+      toast('✔ 合格');
+    }else{
+      msg.innerHTML='<div class="alertbar alert-ok">✔ 已提交（'+who+'）</div>';
     }
-    setTimeout(()=>{closeModal();loadProdlots()},2000);
+    setTimeout(()=>{closeModal();loadProdlots()},2200);
   }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
 }
 
