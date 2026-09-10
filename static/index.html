@@ -234,6 +234,7 @@ function openPage(key){
     dashboard:()=>renderDashboard(),
     qcstandard:()=>renderStdPage(),
     incoming:()=>renderIncomingPage(),
+    prodlot:()=>renderProdlotPage(),
     ncr:()=>renderNcrPage(),
     material:()=>renderEntityPage('material'),
     supplier:()=>renderEntityPage('supplier'),
@@ -1200,6 +1201,229 @@ async function disposeNcr(id,type,ncrNo){
     toast('✔ 已处置：'+names[type]);
     loadNcrs();loadLots();
   }catch(e){toast('✘ '+e.message)}
+}
+
+
+/* ═══════════ 生产批次 / 过程检验 / 成品检验+COA（第4步）═══════════ */
+const PROD_ST={1:'待过程检验',2:'过程合格',3:'过程不合格冻结',4:'待成品检验',5:'成品合格',6:'成品不合格冻结'};
+const PROD_TAG={1:'blue',2:'green',3:'red',4:'warn',5:'green',6:'red'};
+let PROD_TAB='lots';
+
+async function renderProdlotPage(){
+  const c=document.getElementById('content');
+  const ttl=document.createElement('div');ttl.className='page-title';ttl.textContent='🏭 生产批次';
+  c.appendChild(ttl);
+  const desc=document.createElement('div');desc.className='page-desc';
+  desc.textContent='流程：班组长完工建批(选上工序合格批为父批) → 过程检验(合格才能流入下工序) → 末道产出成品 → 成品检验(OQC合格出COA报告) → 放行发货。中间不合格自动冻结并开NCR，禁止流入下工序。';
+  c.appendChild(desc);
+  // Tab 切换
+  const tabs=document.createElement('div');tabs.className='panel';tabs.style.cssText='display:flex;gap:8px;align-items:center;padding:10px 14px';
+  tabs.innerHTML='<button class="btn btn-p btn-sm" id="tab-lots" onclick="switchProdTab(\'lots\')">🏭 生产批次</button>'
+    +'<button class="btn btn-o btn-sm" id="tab-coa" onclick="switchProdTab(\'coa\')">📄 成品报告(COA)</button>'
+    +'<span style="flex:1"></span><span id="prod-sum" style="font-size:12px;color:var(--text-sub)"></span>';
+  c.appendChild(tabs);
+  const body=document.createElement('div');body.id='prod-body';
+  c.appendChild(body);
+  switchProdTab('lots');
+}
+function switchProdTab(t){
+  PROD_TAB=t;
+  document.getElementById('tab-lots').className='btn btn-sm '+(t==='lots'?'btn-p':'btn-o');
+  document.getElementById('tab-coa').className='btn btn-sm '+(t==='coa'?'btn-p':'btn-o');
+  const b=document.getElementById('prod-body');
+  if(t==='lots'){b.innerHTML=prodLotsShell();loadProdlots();}
+  else{b.innerHTML=coaShell();loadCoas();}
+}
+function prodLotsShell(){
+  return '<div class="panel"><div class="searchbar">'
+    +'<select id="f-p-st" style="min-width:130px" onchange="loadProdlots()"><option value="">全部状态</option>'
+    +Object.keys(PROD_ST).map(k=>'<option value="'+k+'">'+PROD_ST[k]+'</option>').join('')+'</select>'
+    +'<input id="f-p-kw" placeholder="搜批号（如 ST03 / RA-）" style="flex:1;min-width:200px" onkeydown="if(event.key===\'Enter\')loadProdlots()">'
+    +'<button class="btn btn-o" onclick="loadProdlots()">🔍 查询</button>'
+    +(canManage('prodlot')?'<button class="btn btn-p" onclick="showProdCreate()">+ 完工建批</button>':'')
+    +'</div></div>'
+    +'<div class="panel" id="addbox-prod" style="display:none"></div>'
+    +'<div class="tbl-wrap"><table><thead><tr><th>生产批号</th><th>工序</th><th>设备/班组</th><th>产出</th><th>数量</th><th>状态</th><th>操作</th></tr></thead><tbody id="tbody-prod"></tbody></table></div>';
+}
+async function loadProdlots(){
+  const st=document.getElementById('f-p-st')?document.getElementById('f-p-st').value:'';
+  const kw=document.getElementById('f-p-kw')?document.getElementById('f-p-kw').value:'';
+  const rows=await api('/api/production-lots?'+qs({status:st,keyword:kw}));
+  const tb=document.getElementById('tbody-prod');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text-sub);padding:26px">暂无生产批次——点右上角"完工建批"开始一炉</td></tr>';return}
+  const mine=ME.role;
+  const canTest=['admin','qm','qc'].includes(mine);
+  tb.innerHTML=rows.map(r=>{
+    let ops='';
+    if(r.status===1)ops=canTest?'<button class="btn btn-p btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'ipqc\')">🧪 过程检验</button>':'<span class="tag tag-gray">待检验</span>';
+    else if(r.status===4)ops=canTest?'<button class="btn btn-s btn-sm" onclick="openProdTest('+r.id+',\''+esc(r.lot_no)+'\',\'oqc\')">🏅 成品检验</button>':'<span class="tag tag-gray">待成品检验</span>';
+    else if(r.status===5)ops=(r.coa_no?'<button class="btn btn-o btn-sm" onclick="showCoaByNo(\''+esc(r.coa_no)+'\')">📄 COA报告</button> ':'')+'<span class="tag tag-green">✔ 已放行</span>';
+    else if(r.status===3||r.status===6)ops='<span class="tag tag-red">'+(r.ncr_no?'已冻结·'+esc(r.ncr_no):'已冻结')+'</span> <button class="btn btn-o btn-sm" onclick="openPage(\'ncr\')">去处置</button>';
+    else if(r.status===2)ops='<span class="tag tag-green">✔ 可流入下工序</span>';
+    return '<tr><td><span class="tag tag-blue" style="font-size:11px">'+esc(r.lot_no)+'</span>'
+      +(r.parent_lot_no?'<div style="font-size:11px;color:var(--text-sub)">父批: '+esc(r.parent_lot_no)+'</div>':'')+'</td>'
+      +'<td><b>'+esc(r.station_name)+'</b><div style="font-size:11px;color:var(--text-sub)">'+esc(r.station_code)+'</div></td>'
+      +'<td style="font-size:12.5px">'+esc(r.equipment_name||'—')+'<div style="font-size:11px;color:var(--text-sub)">'+esc(r.team_name||'')+' · '+esc(r.operator)+'</div></td>'
+      +'<td style="font-size:12.5px">'+esc(r.material_name||'中间料')+'</td><td>'+r.qty+' '+esc(r.unit)+'</td>'
+      +'<td><span class="tag tag-'+PROD_TAG[r.status]+'">'+PROD_ST[r.status]+'</span></td><td>'+ops+'</td></tr>';
+  }).join('');
+  const sum=document.getElementById('prod-sum');
+  if(sum){const all=await api('/api/production-lots');
+    sum.textContent='｜ 待过程检验 '+all.filter(x=>x.status===1).length+' · 待成品检验 '+all.filter(x=>x.status===4).length+' · 成品合格 '+all.filter(x=>x.status===5).length+' · 冻结 '+all.filter(x=>[3,6].includes(x.status)).length;}
+}
+
+async function showProdCreate(){
+  const box=document.getElementById('addbox-prod');
+  const [sts,teams,mats]=await Promise.all([api('/api/station'),api('/api/team'),api('/api/material')]);
+  window.__prodRefs={sts,teams,mats};
+  box.style.display='block';
+  box.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">➕ 完工建批 —— 保存后自动生成生产批号；父批必须是"上工序的合格批"（系统校验）</div>'
+    +'<div class="form-row">'
+    +'<div class="field"><label>工序</label><select id="pc-st" onchange="pcOnStation()" style="min-width:150px">'
+    +'<option value="">选择工序…</option>'+sts.map(x=>'<option value="'+x.id+'">'+esc(x.code+' '+x.name)+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>设备</label><select id="pc-eq" style="min-width:150px"><option value="">先选工序</option></select></div>'
+    +'<div class="field"><label>班组</label><select id="pc-team" style="min-width:90px">'
+    +teams.map(t=>'<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')+'</select></div>'
+    +'</div><div class="form-row">'
+    +'<div class="field" style="flex:2"><label>父批（合格上工序批 / 合格原料批）</label><select id="pc-parent" style="min-width:320px;width:100%"><option value="">先选工序</option></select></div>'
+    +'<div class="field"><label>产出物料</label><select id="pc-mat" style="min-width:170px"><option value="">中间料（不选）</option>'
+    +mats.filter(m=>m.material_type==='成品').map(m=>'<option value="'+m.id+'">'+esc(m.code+' '+m.name)+' (成品)</option>').join('')+'</select></div>'
+    +'<div class="field"><label>数量(kg)</label><input id="pc-qty" type="number" value="1000" style="width:90px"></div>'
+    +'<button class="btn btn-p" onclick="saveProd()">✔ 建批</button>'
+    +'<button class="btn btn-o" onclick="document.getElementById(\'addbox-prod\').style.display=\'none\'">收起</button>'
+    +'</div><div id="pc-msg" style="margin-top:8px"></div>';
+}
+async function pcOnStation(){
+  const sid=Number(document.getElementById('pc-st').value);
+  const eqSel=document.getElementById('pc-eq'),pSel=document.getElementById('pc-parent');
+  if(!sid){eqSel.innerHTML='<option value="">先选工序</option>';pSel.innerHTML='<option value="">先选工序</option>';return}
+  eqSel.innerHTML='<option value="">加载中…</option>';
+  const eqs=await api('/api/equipment?station_id='+sid);
+  const mine=eqs.length?eqs:[];
+  eqSel.innerHTML=(mine.length?mine.map(e=>'<option value="'+e.id+'">'+esc(e.code+' '+e.name)+'</option>').join(''):'<option value="">(该工序暂无设备)</option>');
+  pSel.innerHTML='<option value="">加载中…</option>';
+  try{
+    const ps=await api('/api/production-lots/available-parents?station_id='+sid);
+    pSel.innerHTML=ps.length?ps.map(x=>'<option value="'+esc(x.lot_no)+'">'+esc(x.label)+'</option>').join('')
+      :'<option value="">（无可选父批：需先有合格原料批/上工序合格批）</option>';
+  }catch(e){pSel.innerHTML='<option value="">加载失败：'+esc(e.message)+'</option>'}
+}
+async function saveProd(){
+  const msg=document.getElementById('pc-msg');
+  const sid=Number(document.getElementById('pc-st').value);
+  const parent=document.getElementById('pc-parent').value;
+  if(!sid){msg.innerHTML='<div class="alertbar alert-bad">请选择工序</div>';return}
+  if(!parent){msg.innerHTML='<div class="alertbar alert-bad">请选择父批（合格原料批或上工序合格批）</div>';return}
+  try{
+    const r=await api('/api/production-lots',{method:'POST',body:JSON.stringify({
+      station_id:sid,
+      equipment_id:Number(document.getElementById('pc-eq').value)||null,
+      team_id:Number(document.getElementById('pc-team').value)||null,
+      material_id:Number(document.getElementById('pc-mat').value)||null,
+      parent_lot_no:parent,
+      qty:Number(document.getElementById('pc-qty').value)||0})});
+    msg.innerHTML='<div class="alertbar alert-ok">✔ 建批成功：<b>'+esc(r.lot_no)+'</b>，状态=待过程检验。下一步点"过程检验"录入。</div>';
+    loadProdlots();
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+
+// ── 过程/成品检验录入（复用实时判定）──
+async function openProdTest(pid,lotNo,ctype){
+  let form;
+  try{form=await api('/api/production-lots/'+pid+'/test-form?check_type='+ctype)}
+  catch(e){toast('✘ '+e.message);return}
+  const title=ctype==='ipqc'?'🧪 过程检验':'🏅 成品检验';
+  const box=document.getElementById('modal-box');
+  let itemsHtml='';
+  form.items.forEach((it,i)=>{
+    const lim=(it.min_val!=null||it.max_val!=null)
+      ?'<span style="color:var(--text-sub);font-size:11px">标准：'+(it.min_val!=null?'≥'+it.min_val:'')+(it.max_val!=null?' ≤'+it.max_val:'')+(it.unit?(' '+it.unit):'')+'</span>':'';
+    itemsHtml+='<div class="item-row" style="grid-template-columns:1.3fr 1.2fr .9fr 1fr">'
+      +'<div><b>'+esc(it.indicator)+'</b>'+(it.is_key?' <span class="tag tag-warn" style="font-size:10px">关键</span>':'')+'</div>'
+      +'<div style="font-size:12px;color:var(--text-sub)">'+lim+'<br>方法:'+esc(it.method||'—')+'</div>'
+      +'<input data-i="'+i+'" placeholder="实测值" oninput="liveJudge(this,'+i+')" style="width:90px">'
+      +'<div><span class="res res-wait" id="judge-'+i+'">⏳</span></div></div>';
+  });
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
+    +'<h3>'+title+' · 批号 '+esc(lotNo)+'</h3>'
+    +'<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">按标准 <b>'+esc(form.std_no+' '+form.std_name)+'</b> 自动带出 '+form.items.length+' 项。'
+    +(ctype==='oqc'?'成品检验合格后将自动生成 COA 报告。':'过程检验不合格该批将冻结，禁止流入下工序。')+'</div>'
+    +'<div id="test-items"></div>'
+    +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">取消</button> '
+    +'<button class="btn btn-p" onclick="submitProdTest('+pid+','+form.std_id+',\''+ctype+'\')">✔ 提交检验</button></div>'
+    +'<div id="test-msg" style="margin-top:10px"></div>';
+  document.getElementById('test-items').innerHTML=itemsHtml;
+  window.__testForm=form;
+  document.getElementById('modal-mask').classList.add('show');
+}
+async function submitProdTest(pid,stdId,ctype){
+  const rows=document.querySelectorAll('#test-items .item-row');
+  const items=[];
+  rows.forEach(r=>{
+    const name=r.querySelector('b').textContent.replace('关键','').trim();
+    const inp=r.querySelector('input');
+    if(name&&inp.value.trim()!=='')items.push({indicator:name,actual:inp.value.trim()});
+  });
+  const msg=document.getElementById('test-msg');
+  if(!items.length){msg.innerHTML='<div class="alertbar alert-bad">请至少录入一个实测值</div>';return}
+  try{
+    const r=await api('/api/production-lots/'+pid+'/test',{method:'POST',body:JSON.stringify({std_id:stdId,check_type:ctype,items})});
+    if(r.result===1){
+      if(ctype==='oqc'){msg.innerHTML='<div class="alertbar alert-ok">✔ 成品检验<b>合格</b> —— COA 报告已生成，该批可放行发货。</div>';toast('✔ 成品合格，已出 COA');}
+      else{msg.innerHTML='<div class="alertbar alert-ok">✔ 过程检验<b>合格</b> —— 该批可流入下工序（下工序建批时可选它为父批）。</div>';toast('✔ 过程合格');}
+    }else{
+      msg.innerHTML='<div class="alertbar alert-bad">✘ 检验<b>不合格</b> —— 批次已冻结，自动生成 <b>'+esc(r.ncr_no)+'</b>，禁止流入下工序。<br><span style="font-size:12px">'+esc(r.fail_summary)+'</span></div>';
+      toast('✘ 不合格，已冻结并开 NCR '+r.ncr_no);
+    }
+    setTimeout(()=>{closeModal();loadProdlots()},2000);
+  }catch(e){msg.innerHTML='<div class="alertbar alert-bad">✘ '+esc(e.message)+'</div>'}
+}
+
+// ── 成品报告 COA ──
+function coaShell(){
+  return '<div class="tbl-wrap"><table><thead><tr><th>COA 编号</th><th>生产批号</th><th>产品</th><th>客户</th><th>签发人/日期</th><th>操作</th></tr></thead><tbody id="tbody-coa"></tbody></table></div>'
+    +'<div class="panel" style="font-size:12.5px;color:var(--text-sub)">💡 只有成品检验合格的批次才会出现在这里（放行控制）。点"查看"可预览报告并打印；二维码供客户扫码查看。</div>';
+}
+async function loadCoas(){
+  const rows=await api('/api/coas');
+  const tb=document.getElementById('tbody-coa');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-sub);padding:26px">还没有成品报告——成品检验合格后自动生成</td></tr>';return}
+  tb.innerHTML=rows.map(r=>'<tr>'
+    +'<td><span class="tag tag-green">'+esc(r.coa_no)+'</span></td>'
+    +'<td style="font-size:11.5px">'+esc(r.lot_no)+'</td><td><b>'+esc(r.material_name)+'</b></td>'
+    +'<td>'+esc(r.customer_name)+'</td><td style="font-size:12px;color:var(--text-sub)">'+esc(r.issued_by)+'<br>'+esc(r.created_at)+'</td>'
+    +'<td><button class="btn btn-o btn-sm" onclick="showCoa('+r.id+')">👁 查看/打印</button> '
+    +'<a class="btn btn-o btn-sm" href="/coa/'+esc(r.coa_no)+'" target="_blank">🔗 公开页</a></td></tr>').join('');
+}
+async function showCoa(cid){
+  let d;
+  try{d=await api('/api/coas/'+cid)}catch(e){toast('✘ '+e.message);return}
+  const box=document.getElementById('modal-box');
+  let rows='';
+  d.items.forEach(it=>{
+    let lim='';if(it.min_val!=null)lim+='≥'+it.min_val;if(it.max_val!=null)lim+=(lim?'/':'')+'≤'+it.max_val;
+    rows+='<tr><td>'+esc(it.indicator)+'</td><td>'+(lim||'—')+'</td><td><b>'+esc(it.actual)+'</b> '+esc(it.unit||'')+'</td>'
+      +'<td class="'+(it.pass===1?'res-pass':'res-fail')+'" style="font-weight:600">'+(it.pass===1?'合格':'不合格')+'</td></tr>';
+  });
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span>'
+    +'<h3>📄 成品质量检验报告（COA）</h3>'
+    +'<div style="display:flex;gap:20px;align-items:flex-start">'
+    +'<div style="flex:1">'
+    +'<div style="font-size:13px;line-height:1.9">报告编号 <b>'+esc(d.coa_no)+'</b>　签发 <b>'+esc(d.issued_by)+'</b>　日期 <b>'+esc(d.created_at)+'</b><br>'
+    +'产品：<b>'+esc(d.material_name)+'</b>（'+esc(d.material_spec||'')+'）<br>'
+    +'生产批号：<b style="font-size:12px">'+esc(d.lot_no)+'</b>　数量：'+d.qty+' '+esc(d.unit)+'<br>客户：<b>'+esc(d.customer_name)+'</b></div>'
+    +'<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>检验项目</th><th>标准</th><th>实测</th><th>判定</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'</div>'
+    +'<div style="text-align:center"><img src="/api/public/coa/'+encodeURIComponent(d.coa_no)+'/qr.svg" style="width:130px;height:130px;border:1px solid #e3ecf6;border-radius:8px;padding:6px;background:#fff"><div style="font-size:11px;color:var(--text-sub);margin-top:4px">客户扫码查看</div></div>'
+    +'</div>'
+    +'<div style="text-align:right;margin-top:12px"><button class="btn btn-o" onclick="closeModal()">关闭</button> '
+    +'<a class="btn btn-p" href="/coa/'+esc(d.coa_no)+'" target="_blank">🖨 打开打印页</a></div>';
+  document.getElementById('modal-mask').classList.add('show');
+}
+async function showCoaByNo(coaNo){
+  const rows=await api('/api/coas');
+  const r=rows.find(x=>x.coa_no===coaNo);
+  if(r)showCoa(r.id);else toast('未找到该 COA');
 }
 
 /* ═══════════ 启动 ═══════════ */

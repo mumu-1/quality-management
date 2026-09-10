@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -1279,6 +1279,7 @@ def prod_test(pid: int, body: ProdTestIn, token: str = Header(""),
 
 def _issue_coa(db, prod_lot, test_id, customer_id, username):
     """OQC 合格 → 生成 COA（明细快照 items_json，此后标准改动不影响历史报告）"""
+    db.flush()   # 关键：session autoflush=False，先落库才能查到本次检验明细
     items = db.query(M.TestItem).filter(M.TestItem.test_id == test_id) \
         .order_by(M.TestItem.seq).all()
     snap = [{"indicator": it.indicator, "actual": it.actual, "unit": it.unit,
@@ -1343,6 +1344,110 @@ def fg_available(token: str = Header(""), db: Session = Depends(get_db)):
     require_page(u, "prodlot")
     rows = db.query(M.ProductionLot).filter(M.ProductionLot.status == 5).all()
     return [_prod_out(db, p) for p in rows]
+
+# ── 建批：本工序可选的父批（首工序列合格原料批；其余列上工序合格生产批）──
+@app.get("/api/production-lots/available-parents")
+def available_parents(station_id: int, token: str = Header(""),
+                      db: Session = Depends(get_db)):
+    u = require_user(token, db)
+    require_page(u, "prodlot")
+    prevs = _prev_stations(db, station_id)
+    out = []
+    if not prevs:
+        for lot in db.query(M.IncomingLot).filter(M.IncomingLot.status.in_([2, 4])).all():
+            mat = db.get(M.Material, lot.material_id) if lot.material_id else None
+            out.append({"type": "incoming", "lot_no": lot.lot_no,
+                        "label": f"[原料] {lot.lot_no} · {mat.name if mat else ''} · "
+                                 f"{lot.qty}{lot.unit} · {LOT_STATUS.get(lot.status)}",
+                        "status_name": LOT_STATUS.get(lot.status)})
+    else:
+        for pl in db.query(M.ProductionLot).filter(
+                M.ProductionLot.station_id.in_(prevs),
+                M.ProductionLot.status.in_([2, 5])).all():
+            st = db.get(M.Station, pl.station_id)
+            mat = db.get(M.Material, pl.material_id) if pl.material_id else None
+            out.append({"type": "production", "lot_no": pl.lot_no,
+                        "label": f"[上工序·{st.name if st else ''}] {pl.lot_no} · "
+                                 f"{mat.name if mat else '中间料'} · {pl.qty}{pl.unit} · "
+                                 f"{PROD_STATUS.get(pl.status)}",
+                        "status_name": PROD_STATUS.get(pl.status)})
+    return out
+
+
+# ── COA 公开页（客户扫码查看，无需登录；只含对外信息）──
+def _coa_public_html(db, c) -> str:
+    p = db.get(M.ProductionLot, c.prod_id)
+    mat = db.get(M.Material, p.material_id) if p and p.material_id else None
+    cust = db.get(M.Customer, c.customer_id) if c.customer_id else None
+    try:
+        items = json.loads(c.items_json or "[]")
+    except Exception:
+        items = []
+    rows = ""
+    for it in items:
+        lim = ""
+        if it.get("min_val") is not None:
+            lim += f"≥{it['min_val']}"
+        if it.get("max_val") is not None:
+            lim += ("/" if lim else "") + f"≤{it['max_val']}"
+        ok = it.get("pass") == 1
+        rows += (f"<tr><td>{it.get('indicator','')}</td><td>{lim or '—'}</td>"
+                 f"<td><b>{it.get('actual','')}</b> {it.get('unit','')}</td>"
+                 f"<td class=\"{'ok' if ok else 'bad'}\">{'合格' if ok else '不合格'}</td></tr>")
+    issued = c.created_at.strftime("%Y-%m-%d") if c.created_at else ""
+    return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>质量检验报告 {c.coa_no}</title>
+<style>
+body{{font-family:"Microsoft YaHei",system-ui,sans-serif;background:#f4f7fb;margin:0;padding:18px;color:#22303f}}
+.card{{max-width:720px;margin:0 auto;background:#fff;border:1px solid #dfe8f3;border-radius:12px;padding:22px 24px}}
+h1{{font-size:19px;margin:0 0 4px}} .sub{{color:#6b7c93;font-size:12.5px;margin-bottom:14px}}
+table{{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}}
+th,td{{border:1px solid #e3ecf6;padding:7px 9px;text-align:left}}
+th{{background:#f2f7fd;font-weight:600;color:#3d5a7a}}
+.ok{{color:#18864b;font-weight:600}} .bad{{color:#c92a3d;font-weight:600}}
+.meta{{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;font-size:13px;margin-top:6px}}
+.meta b{{color:#3d5a7a}}
+.qr{{text-align:center;margin-top:16px}} .qr img{{width:130px;height:130px}}
+.foot{{margin-top:14px;font-size:11.5px;color:#8595a8;text-align:center}}
+.badge{{display:inline-block;background:#e8f7ee;color:#18864b;border:1px solid #bfe6cd;border-radius:20px;padding:2px 12px;font-size:12px;font-weight:600}}
+</style></head><body><div class="card">
+<h1>成品质量检验报告（COA）</h1>
+<div class="sub">报告编号 <b>{c.coa_no}</b> ｜ 签发日期 {issued} <span class="badge">检验合格</span></div>
+<div class="meta">
+<div><b>产品名称：</b>{mat.name if mat else '—'}</div>
+<div><b>产品规格：</b>{mat.spec if mat else '—'}</div>
+<div><b>生产批号：</b>{p.lot_no if p else '—'}</div>
+<div><b>数量：</b>{p.qty if p else 0} {p.unit if p else ''}</div>
+<div><b>客户：</b>{cust.name if cust else '（通用）'}</div>
+<div><b>签发：</b>{c.issued_by or ''}</div>
+</div>
+<table><thead><tr><th>检验项目</th><th>标准要求</th><th>实测结果</th><th>判定</th></tr></thead>
+<tbody>{rows}</tbody></table>
+<div class="qr"><img src="/api/public/coa/{c.coa_no}/qr.svg" alt="扫码查看"><div style="font-size:11px;color:#8595a8;margin-top:4px">扫码查看本报告</div></div>
+<div class="foot">本报告由生产质量管理系统自动生成，数据来源于成品检验（OQC）原始记录</div>
+</div></body></html>"""
+
+
+@app.get("/coa/{coa_no}", response_class=HTMLResponse)
+def coa_public(coa_no: str, db: Session = Depends(get_db)):
+    """客户扫码公开展示页（无需登录）"""
+    c = db.query(M.Coa).filter(M.Coa.coa_no == coa_no).first()
+    if not c:
+        return HTMLResponse("<h3 style=\"font-family:sans-serif;color:#c92a3d\">报告不存在或已作废</h3>", status_code=404)
+    return HTMLResponse(_coa_public_html(db, c))
+
+
+@app.get("/api/public/coa/{coa_no}/qr.svg")
+def coa_qr(coa_no: str, db: Session = Depends(get_db)):
+    """COA 二维码（内容=相对路径，客户扫码后由部署域名解析）"""
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(f"/coa/{coa_no}", image_factory=qrcode.image.svg.SvgPathImage,
+                      box_size=10, border=1)
+    buf = io.BytesIO()
+    img.save(buf)
+    return Response(content=buf.getvalue(), media_type="image/svg+xml")
 
 
 # ═══════════════════════ 权限矩阵（供账号页勾选）═══════════════════════
