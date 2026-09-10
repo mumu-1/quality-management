@@ -35,6 +35,7 @@ TOKEN_TTL_HOURS = 12
 PAGES = {
     "dashboard":   ("📊 质量总览", "总览", ""),
     "screen":      ("🖥️ 车间大屏", "总览", "screen"),
+    "board":       ("📺 数据大屏", "总览", "board"),
     "prodlot":     ("🏭 生产批次", "生产制造", "prodlot"),
     "qcstandard":  ("📋 检验标准库", "质量管控", "qcstandard"),
     "incoming":    ("🚚 来料检验", "质量管控", "incoming"),
@@ -50,7 +51,7 @@ PAGES = {
     "equipment":   ("🔧 设备管理", "基础资料", "equipment"),
     "user":        ("🛠️ 账号管理", "系统管理", "user"),
 }
-_QC_CORE = ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
+_QC_CORE = ["dashboard", "board", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report"]
 _BASEINFO = ["material", "supplier", "customer", "workshop", "station", "team", "equipment"]
 # 角色 → 可访问页面
 ROLE_PAGES = {
@@ -1945,6 +1946,176 @@ def coa_qr(coa_no: str, db: Session = Depends(get_db)):
     buf = io.BytesIO()
     img.save(buf)
     return Response(content=buf.getvalue(), media_type="image/svg+xml")
+
+# ═══════════════════════ 数据大屏（管理层，第6步增强）═══════════════════════
+@app.get("/api/board")
+def board_data(days: int = 30, token: str = Header(""), db: Session = Depends(get_db)):
+    """管理层汇总：全厂 KPI / 供应商来料合格率排名 / 工序合格率 / NCR 趋势与原因 /
+    SPC 失控预警汇总 / 成品交付"""
+    u = require_user(token, db)
+    require_page(u, "board")
+    now = datetime.now()
+    days = max(7, min(int(days), 365))
+    since = now - timedelta(days=days)
+    month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    trs = db.query(M.TestRecord).filter(M.TestRecord.created_at >= since).all()
+    trs_m = [t for t in trs if t.created_at and t.created_at >= month0]
+
+    def rate(xs):
+        p = len([t for t in xs if t.result == 1])
+        f = len([t for t in xs if t.result == 2])
+        return {"total": len(xs), "pass": p, "fail": f,
+                "rate": round(p * 100.0 / (p + f), 1) if (p + f) else None}
+
+    # 供应商来料合格率排名（管理层最关心：哪家供应商质量好/差）
+    sups = {sp.id: sp for sp in db.query(M.Supplier).all()}
+    lots = db.query(M.IncomingLot).filter(M.IncomingLot.created_at >= since).all()
+    agg = {}
+    for lot in lots:
+        if lot.status not in (2, 3, 4, 5, 6):      # 只统计已判定的
+            continue
+        e = agg.setdefault(lot.supplier_id, [0, 0])
+        e[0] += 1
+        if lot.status in (2, 4):
+            e[1] += 1
+    supplier_rates = sorted(
+        ({"supplier": sups[k].name if k in sups else "?",
+          "lots": v[0], "ok": v[1],
+          "rate": round(v[1] * 100.0 / v[0], 1) if v[0] else None}
+         for k, v in agg.items()),
+        key=lambda x: (x["rate"] is None, x["rate"]))
+    # 各工序过程合格率
+    sts = {st.id: st for st in db.query(M.Station).all()}
+    prods = {pl.id: pl for pl in db.query(M.ProductionLot).all()}
+    st_agg = {}
+    for t in trs:
+        if t.check_type != "ipqc" or t.result not in (1, 2) or not t.prod_id:
+            continue
+        pl = prods.get(t.prod_id)
+        if not pl:
+            continue
+        e = st_agg.setdefault(pl.station_id, [0, 0])
+        e[0] += 1
+        if t.result == 1:
+            e[1] += 1
+    station_rates = [{"station": sts[k].name if k in sts else "?",
+                      "tests": v[0], "rate": round(v[1] * 100.0 / v[0], 0) if v[0] else None}
+                     for k, v in sorted(st_agg.items(), key=lambda x: -x[1][0])]
+    # NCR：趋势 + 原因 TOP
+    ncrs = db.query(M.Ncr).filter(M.Ncr.created_at >= since).all()
+    trend_map = {}
+    for n in ncrs:
+        if not n.created_at:
+            continue
+        d = n.created_at.strftime("%m-%d")
+        trend_map[d] = trend_map.get(d, 0) + 1
+    ncr_trend = [{"date": d, "count": trend_map[d]} for d in sorted(trend_map)]
+    fails = db.query(M.TestItem).join(
+        M.TestRecord, M.TestItem.test_id == M.TestRecord.id).filter(
+        M.TestItem.pass_flag == 0, M.TestRecord.created_at >= since).all()
+    cnt = {}
+    for f in fails:
+        cnt[f.indicator] = cnt.get(f.indicator, 0) + 1
+    fail_pareto = sorted(({"name": k, "count": v} for k, v in cnt.items()),
+                         key=lambda x: -x["count"])[:8]
+    # SPC 失控预警汇总
+    alarm_items = []
+    try:
+        sts_map = {st.id: st for st in db.query(M.Station).all()}
+        mats_map = {m.id: m for m in db.query(M.Material).all()}
+        prods_map = {pl.id: pl for pl in db.query(M.ProductionLot).all()}
+        lots_map = {l.id: l for l in db.query(M.IncomingLot).all()}
+        rows = db.query(M.TestItem, M.TestRecord).join(
+            M.TestRecord, M.TestItem.test_id == M.TestRecord.id).all()
+        agg2 = {}
+        for it, tr in rows:
+            try:
+                float(str(it.actual).strip())
+            except (TypeError, ValueError):
+                continue
+            otype = oid = None
+            scope = "-"
+            if tr.prod_id and tr.prod_id in prods_map:
+                pl = prods_map[tr.prod_id]
+                otype, oid = "station", pl.station_id
+                scope = sts_map[pl.station_id].name if pl.station_id in sts_map else "-"
+            elif tr.lot_id and tr.lot_id in lots_map:
+                il = lots_map[tr.lot_id]
+                otype, oid = "material", il.material_id
+                scope = mats_map[il.material_id].name if il.material_id in mats_map else "-"
+            agg2.setdefault((tr.check_type, it.indicator, otype, oid, scope), []).append(tr)
+        for (ct, ind, otype, oid, scope), ts in agg2.items():
+            if len(ts) < 6 or not otype:
+                continue
+            series = _numeric_series(db, ct, ind, otype, oid)
+            vals = [x["value"] for x in series][-25:]
+            if len(vals) < 6:
+                continue
+            xbar = sum(vals) / len(vals)
+            mrs = [abs(vals[i] - vals[i - 1]) for i in range(1, len(vals))]
+            mrbar = sum(mrs) / len(mrs) if mrs else 0
+            if mrbar <= 1e-9:
+                continue
+            ucl, lcl = xbar + 2.66 * mrbar, xbar - 2.66 * mrbar
+            oc = [v for v in vals if v > ucl or v < lcl]
+            if oc:
+                alarm_items.append({"scope": scope, "indicator": ind,
+                                    "check_type": COA_CHECK_TYPES.get(ct, ct),
+                                    "out": len(oc), "latest": oc[-1],
+                                    "side": "超上限" if oc[-1] > ucl else "超下限"})
+    except Exception:      # noqa: BLE001
+        pass
+    # 成品交付
+    coas = db.query(M.Coa).filter(M.Coa.created_at >= since).all()
+    pls = db.query(M.ProductionLot).all()
+    return {
+        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "days": days,
+        "kpi": {
+            "month_tests": len(trs_m),
+            "month_rate": rate(trs_m)["rate"],
+            "range_rate": rate(trs)["rate"],
+            "iqc": rate([t for t in trs if t.check_type == "iqc"]),
+            "ipqc": rate([t for t in trs if t.check_type == "ipqc"]),
+            "oqc": rate([t for t in trs if t.check_type == "oqc"]),
+            "ncr": len(ncrs),
+            "ncr_open": len([n for n in ncrs if n.status == 0]),
+            "ncr_close_rate": round(len([n for n in ncrs if n.status != 0]) * 100.0 / len(ncrs), 0)
+            if ncrs else None,
+            "coa": len(coas),
+            "fg_ok": len([p for p in pls if p.status == 5]),
+            "frozen": len([p for p in pls if p.status in (3, 6)]),
+        },
+        "supplier_rates": supplier_rates,
+        "station_rates": station_rates,
+        "ncr_trend": ncr_trend,
+        "fail_pareto": fail_pareto,
+        "spc_alarm": {"count": len(alarm_items), "items": alarm_items[:6]},
+    }
+
+
+@app.get("/api/lan-qr")
+def lan_qr(token: str = Header(""), db: Session = Depends(get_db)):
+    """手机扫码访问：生成"本机局域网地址"的二维码（车间贴一张，手机扫码即用）"""
+    require_user(token, db)
+    import socket
+    import qrcode
+    import qrcode.image.svg
+    ip = "127.0.0.1"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:      # noqa: BLE001
+        pass
+    url = f"http://{ip}:8000"
+    img = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=1)
+    buf = io.BytesIO()
+    img.save(buf)
+    from fastapi.responses import Response as _R
+    return _R(content=buf.getvalue(), media_type="image/svg+xml",
+              headers={"X-QMS-URL": url})
 
 
 # ═══════════════════════ 权限矩阵（供账号页勾选）═══════════════════════

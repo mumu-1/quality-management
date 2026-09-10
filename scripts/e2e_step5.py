@@ -165,6 +165,53 @@ page_s = page.decode("utf-8", "ignore") if isinstance(page, bytes) else str(page
 check("大屏页含 30 秒自动刷新", "30000" in page_s and "loadScreen" in page_s)
 check("大屏为深色主题样式", ".sc-wrap" in page_s and "#0b1c2c" in page_s)
 
+print("══ 4b. 数据大屏（管理层）══")
+bd = call("GET", "/api/board?days=30", token=AT)
+check("大屏返回 KPI/供应商/工序/NCR/原因/SPC",
+      all(k in bd for k in ("kpi", "supplier_rates", "station_rates", "ncr_trend",
+                            "fail_pareto", "spc_alarm", "updated_at")))
+check("含本月与区间合格率", bd["kpi"]["month_rate"] is not None or bd["kpi"]["range_rate"] is not None)
+check("三类检验合格率齐全", all(k in bd["kpi"] for k in ("iqc", "ipqc", "oqc")))
+check("★ 供应商来料合格率排名（管理层核心视角）", len(bd["supplier_rates"]) >= 1,
+      str([(x["supplier"][:6], x["rate"]) for x in bd["supplier_rates"][:3]]))
+check("供应商排名按合格率升序(差→好，便于关注)",
+      all((bd["supplier_rates"][i]["rate"] or 0) <= (bd["supplier_rates"][i+1]["rate"] or 0)
+          for i in range(len(bd["supplier_rates"])-1)))
+check("工序合格率带样本数", all("tests" in x and "rate" in x for x in bd["station_rates"]))
+check("NCR 趋势为按日计数", all("date" in x and "count" in x for x in bd["ncr_trend"]))
+check("SPC 预警汇总含明细", "count" in bd["spc_alarm"] and "items" in bd["spc_alarm"])
+# 与 SPC 单指标接口自洽：大屏预警数与逐指标计算结果一致
+alarm_cnt = 0
+for it in call("GET", "/api/spc/items", token=AT):
+    ch = call("GET", "/api/spc/chart?check_type=%s&indicator=%s&object_type=%s&object_id=%s"
+              % (it["check_type"], urllib.parse.quote(it["indicator"]),
+                 it.get("object_type") or "", it.get("object_id") or 0), token=AT)
+    if ch.get("alarm"):
+        alarm_cnt += 1
+check("大屏 SPC 预警数与逐指标核验一致", bd["spc_alarm"]["count"] == alarm_cnt,
+      f"大屏 {bd['spc_alarm']['count']} vs 核验 {alarm_cnt}")
+# 权限：管理层角色可见，检验员不可见
+pm = call("GET", "/api/admin/perm-matrix", token=AT)
+_qm = next((r for r in pm["roles"] if r["key"] == "qm"), None)
+check("质量经理可见数据大屏", bool(_qm) and "board" in _qm["pages"],
+      str(_qm["pages"]) if _qm else "未找到 qm 角色")
+check("检验员无数据大屏权限 403", call("GET", "/api/board", token=QCT).get("_err") == 403)
+check("采购无数据大屏权限 403", call("GET", "/api/board", token=BT).get("_err") == 403)
+
+print("══ 4c. 手机端适配 ══")
+page2 = call("GET", "/", raw=True)
+ps2 = page2.decode("utf-8", "ignore") if isinstance(page2, bytes) else str(page2)
+check("响应式媒体查询存在", "@media (max-width: 840px)" in ps2)
+check("侧边栏抽屉(transform 滑出)", "translateX(-102%)" in ps2 or "translateX(-100%)" in ps2)
+check("底部 Tab 栏样式与渲染函数", ".mobile-tabbar" in ps2 and "renderMobileTabs" in ps2)
+check("抽屉遮罩可关闭", "drawer-mask" in ps2 and "toggleDrawer" in ps2)
+check("手机上表格可横向滑动", "overflow-x:auto" in ps2 and "-webkit-overflow-scrolling" in ps2)
+check("手机上表单字段纵向铺满", "width:100%!important" in ps2)
+check("手机访问二维码接口可用", isinstance(call("GET", "/api/lan-qr", token=AT, raw=True), bytes))
+qr = call("GET", "/api/lan-qr", token=AT, raw=True)
+check("二维码为 SVG 且非空", isinstance(qr, bytes) and len(qr) > 1000 and b"<svg" in qr[:200],
+      f"{len(qr) if isinstance(qr,bytes) else 0} 字节")
+
 print("══ 5. 权限 ══")
 check("检验员可看报表", isinstance(call("GET", "/api/reports/summary", token=QCT), dict))
 check("检验员可看追溯", isinstance(call("GET", "/api/trace?lot_no=" + urllib.parse.quote(lot_no), token=QCT), dict))

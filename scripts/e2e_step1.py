@@ -50,8 +50,8 @@ check("错误密码被拒", bad.get("_err") == 401)
 def keys(d):
     return sorted([m["key"] for m in d.get("menus", [])])
 
-check("admin 可见全部16页", keys(admin) == sorted(
-    ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
+check("admin 可见全部17页", keys(admin) == sorted(
+    ["dashboard", "screen", "board", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "supplier", "customer", "workshop", "station", "team", "equipment", "user"]), str(keys(admin)))
 check("qc(检验员) 可见10页且无账号管理", keys(qc) == sorted(
     ["dashboard", "screen", "prodlot", "qcstandard", "incoming", "ncr", "trace", "report", "material", "equipment"]), str(keys(qc)))
 check("store(仓储) 无供应商管理", "supplier" not in keys(store), str(keys(store)))
@@ -70,7 +70,7 @@ check("qc 写物料被拒 403（越权拦截）", over.get("_err") == 403, str(o
 # ═══ 2. 基础资料 CRUD ═══
 print("══ 2. 基础资料 CRUD ══")
 mats = call("GET", "/api/material", token=AT)
-check("物料列表返回9条演示数据", len(mats) == 9, f"实际 {len(mats)}")
+check("物料列表含演示数据(≥9条，可重复运行)", len(mats) >= 9, f"实际 {len(mats)}")
 names = [m["name"] for m in mats]
 for expect in ["七水硫酸亚铁", "磷酸一铵", "85%磷酸", "双氧水", "木质纤维素", "硅藻土", "硫酸"]:
     check(f"物料含 {expect}", expect in names)

@@ -124,6 +124,68 @@ tr:hover td{background:#f7fbfe}
 .sc-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
 .sc-tbl th{color:#8fb0cc;text-align:left;padding:6px 8px;border-bottom:1px solid #1d3b57;font-weight:600}
 .sc-tbl td{padding:6px 8px;border-bottom:1px solid #15304a;color:#d7e6f4}
+
+/* ═══════ 手机端适配（抽屉导航 + 底部 Tab）═══════ */
+.menu-btn{display:none;background:none;border:none;font-size:20px;color:#3d5a7a;cursor:pointer;padding:2px 8px}
+.mobile-tabbar{display:none}
+.drawer-mask{display:none;position:fixed;inset:0;background:rgba(15,32,50,.4);z-index:55}
+.drawer-mask.show{display:block}
+@media (max-width: 840px){
+  .topbar{padding:8px 10px;gap:6px}
+  .topbar .logo{font-size:13.5px;flex:1;white-space:nowrap;overflow:hidden}
+  .topbar .logo .ic{font-size:15px}
+  .top-link{display:none}               /* 手机上顶栏链接收起，功能进底部Tab/抽屉 */
+  .top-right .u-chip{font-size:11.5px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .menu-btn{display:inline-block}
+  .layout{display:block}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;width:238px;z-index:60;
+           transform:translateX(-102%);transition:transform .24s ease;box-shadow:2px 0 14px rgba(15,40,70,.18);
+           overflow-y:auto;padding-bottom:70px}
+  .sidebar.open{transform:translateX(0)}
+  .content{padding:10px 12px 74px}
+  .page-title{font-size:17.5px}
+  .page-desc{font-size:12px;line-height:1.55}
+  .form-row{flex-wrap:wrap;gap:8px}
+  .field{width:100%!important;min-width:0!important}
+  .field label{font-size:12px}
+  .field input,.field select,.field textarea{width:100%!important;min-width:0!important;box-sizing:border-box}
+  .searchbar{flex-wrap:wrap;gap:6px}
+  .searchbar input,.searchbar select{width:100%!important;min-width:0!important;box-sizing:border-box}
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tbl-wrap table{font-size:12.5px;min-width:560px}   /* 表格可横向滑动 */
+  .item-row{grid-template-columns:1fr!important;gap:6px!important;border-bottom:1px solid #eef4fa;padding:8px 0}
+  .item-row input{width:100%!important}
+  .btn{padding:7px 13px;font-size:13px}
+  .btn-sm{padding:5px 10px;font-size:12px}
+  #modal-box{width:94vw!important;max-width:94vw;max-height:88vh;overflow-y:auto;padding:14px 14px 20px}
+  .kpi-card{min-width:calc(50% - 6px)!important;flex:1 1 calc(50% - 6px)}
+  .sc-wrap{border-radius:8px;padding:10px 10px}
+  .sc-title{font-size:16px}
+  .sc-v{font-size:21px}
+  .sc-tbl{font-size:11.5px}
+  /* 底部 Tab 栏 */
+  .mobile-tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;height:56px;z-index:52;
+                 background:#fff;border-top:1px solid #e3ecf6;box-shadow:0 -2px 10px rgba(15,40,70,.06)}
+  .mtb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+       gap:1px;font-size:10.5px;color:#7b8ca3;background:none;border:none;cursor:pointer;padding:0}
+  .mtb .mi{font-size:19px;line-height:1.1}
+  .mtb.on{color:var(--accent);font-weight:600}
+}
+/* 数据大屏（管理层） */
+.bd-wrap{background:#0b1c2c;border-radius:12px;padding:16px 18px;color:#e6f1fa;min-height:72vh}
+.bd-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+.bd-c4{grid-column:span 4}.bd-c6{grid-column:span 6}.bd-c8{grid-column:span 8}.bd-c12{grid-column:span 12}
+@media(max-width:1100px){.bd-c4,.bd-c6,.bd-c8{grid-column:span 12}}
+@media(max-width:840px){.bd-wrap{padding:10px}.bd-grid{gap:9px}.bd-v{font-size:20px!important}}
+.bd-card{background:linear-gradient(160deg,#12324d,#0e2740);border:1px solid #1d3b57;border-radius:10px;padding:12px 14px}
+.bd-lb{font-size:12.5px;color:#9fb3c8}
+.bd-v{font-size:26px;font-weight:700;margin-top:5px}
+.bd-ph{font-size:13.5px;font-weight:600;color:#bfe0ff;margin-bottom:8px}
+.bd-bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12.5px}
+.bd-bar .nm{width:104px;color:#cfe3f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-bar .tr{flex:1;background:#12324d;height:12px;border-radius:6px;overflow:hidden}
+.bd-bar .fl{height:100%;border-radius:6px}
+.bd-bar .vv{width:60px;text-align:right;color:#9fb3c8}
 </style>
 </head>
 <body>
@@ -145,9 +207,11 @@ tr:hover td{background:#f7fbfe}
 <!-- ══════════ 主界面 ══════════ -->
 <div id="app-view" class="hidden">
   <div class="topbar">
+    <button class="menu-btn" onclick="toggleDrawer()" title="菜单">☰</button>
     <div class="logo"><span class="ic">🏭</span>生产质量管理系统</div>
-    <span class="top-link" onclick="toast('📱 移动端将在后续步骤交付（车间手机录入）')">📱 移动端</span>
-    <span class="top-link" onclick="toast('📺 车间大屏将在第5步交付')">📺 数据大屏</span>
+    <span class="top-link" onclick="showMobileQr()">📱 手机访问</span>
+    <span class="top-link" onclick="openBoardPage()">📺 数据大屏</span>
+    <span class="top-link" onclick="openPage('screen')">🖥️ 车间大屏</span>
     <div class="top-right">
       <span class="u-chip" id="u-chip"></span>
       <button class="btn-quit" onclick="doLogout()">退出</button>
@@ -220,6 +284,8 @@ function enterApp(){
   document.getElementById('app-view').classList.remove('hidden');
   document.getElementById('u-chip').textContent='👤 '+ME.real_name+' · '+roleName(ME.role);
   renderSidebar();
+  renderMobileTabs();
+  window.addEventListener('resize',()=>{renderMobileTabs();if(!isMobile())toggleDrawer(false)});
   openPage('dashboard');
 }
 function roleName(k){return {admin:'系统管理员',boss:'高层',qm:'质量经理',qc:'检验员',sampler:'取样员',prodlead:'班组长/主管',buyer:'采购',store:'仓储',worker:'操作工'}[k]||k}
@@ -246,6 +312,8 @@ function tg(el){el.classList.toggle('open');const it=el.nextElementSibling;if(it
 /* ═══════════ 页面路由 ═══════════ */
 function openPage(key){
   document.querySelectorAll('.menu-item').forEach(x=>x.classList.toggle('active',x.dataset.p===key));
+  if(isMobile()){toggleDrawer(false);markMobileTab(key);}
+  window.scrollTo({top:0,behavior:'instant'});
   const c=document.getElementById('content');
   const R={
     dashboard:()=>renderDashboard(),
@@ -255,6 +323,7 @@ function openPage(key){
     trace:()=>renderTracePage(),
     report:()=>renderReportPage(),
     screen:()=>renderScreenPage(),
+    board:()=>renderBoardPage(),
     ncr:()=>renderNcrPage(),
     material:()=>renderEntityPage('material'),
     supplier:()=>renderEntityPage('supplier'),
@@ -1735,6 +1804,122 @@ async function loadScreen(){
     +'</tbody></table></div>';
 }
 
+
+/* ═══════════ 手机端交互（抽屉 + 底部 Tab）═══════════ */
+function isMobile(){return window.innerWidth<=840}
+function toggleDrawer(force){
+  const sb=document.getElementById('sidebar');
+  const mk=document.getElementById('drawer-mask')||(()=>{const d=document.createElement('div');d.id='drawer-mask';d.className='drawer-mask';d.onclick=()=>toggleDrawer(false);document.body.appendChild(d);return d})();
+  const open=force===undefined?!sb.classList.contains('open'):force;
+  sb.classList.toggle('open',open);
+  mk.classList.toggle('show',open);
+}
+const MTB=[['dashboard','📊','总览'],['incoming','🚚','来料'],['prodlot','🏭','生产'],['trace','🔍','追溯'],['__more','☰','更多']];
+function renderMobileTabs(){
+  document.querySelectorAll('.mobile-tabbar').forEach(x=>x.remove());
+  if(!isMobile())return;
+  const items=MTB.filter(x=>x[0]==='__more'||hasPage(x[0]));
+  if(items.length<3)return;
+  const bar=document.createElement('div');bar.className='mobile-tabbar';
+  bar.innerHTML=items.map(([k,ic,lb])=>'<button class="mtb" data-t="'+k+'" onclick="'+(k==='__more'?'toggleDrawer(true)':'openPage(\''+k+'\')')+'"><span class="mi">'+ic+'</span>'+lb+'</button>').join('');
+  document.body.appendChild(bar);
+}
+function markMobileTab(key){
+  document.querySelectorAll('.mtb').forEach(b=>b.classList.toggle('on',b.dataset.t===key));
+}
+
+/* ═══════════ 手机访问二维码（扫码即用）═══════════ */
+async function showMobileQr(){
+  const box=document.getElementById('modal-box');
+  box.innerHTML='<span class="close-x" onclick="closeModal()">✕</span><h3>📱 手机访问</h3>'
+    +'<div style="font-size:13px;color:var(--text-sub);margin-bottom:10px">手机连<b>同一个 WiFi/网络</b>，扫码即可打开（或用浏览器输入下方地址）。车间电脑同理。</div>'
+    +'<div style="text-align:center"><img src="/api/lan-qr?token='+encodeURIComponent(TOKEN)+'" style="width:170px;height:170px;background:#fff;border:1px solid #e3ecf6;border-radius:10px;padding:8px"></div>'
+    +'<div id="mq-url" style="text-align:center;font-size:13px;margin-top:8px;color:var(--accent);font-weight:600">…</div>'
+    +'<div style="font-size:12px;color:var(--text-sub);margin-top:10px">💡 若打不开：① 确认手机与服务器同一网络 ② 服务器防火墙已放行 8000 端口（见《运维手册》第二节）</div>';
+  document.getElementById('modal-mask').classList.add('show');
+  fetch('/api/lan-qr?token='+encodeURIComponent(TOKEN)).then(r=>{
+    document.getElementById('mq-url').textContent=r.headers.get('X-QMS-URL')||'';
+  }).catch(()=>{});
+}
+function openBoardPage(){
+  if(!hasPage('board')){toast('你的账号没有数据大屏权限（可找管理员开通）');return}
+  openPage('board');
+}
+
+/* ═══════════ 数据大屏（管理层）═══════════ */
+let BOARD_TIMER=null, BOARD_DAYS=30;
+async function renderBoardPage(){
+  const c=document.getElementById('content');
+  c.innerHTML='<div id="board-root"><div style="color:var(--text-sub);padding:14px">数据大屏加载中…</div></div>';
+  await loadBoard();
+  if(BOARD_TIMER)clearInterval(BOARD_TIMER);
+  BOARD_TIMER=setInterval(()=>{ if(document.getElementById('board-root'))loadBoard(); else clearInterval(BOARD_TIMER) },30000);
+}
+async function loadBoard(){
+  const root=document.getElementById('board-root');
+  if(!root)return;
+  let d;
+  try{d=await api('/api/board?days='+BOARD_DAYS)}catch(e){root.innerHTML='<div style="color:#f66;padding:16px">✘ '+esc(e.message)+'</div>';return}
+  const k=d.kpi;
+  const bar=(name,rate,extra)=>{
+    const col=rate==null?'#5b7794':(rate>=98?'#69f0ae':(rate>=90?'#ffd54f':'#ff8a80'));
+    return '<div class="bd-bar"><span class="nm" title="'+esc(name)+'">'+esc(name)+'</span>'
+      +'<span class="tr"><span class="fl" style="width:'+(rate||0)+'%;background:'+col+'"></span></span>'
+      +'<span class="vv">'+(rate==null?'—':rate+'%')+'</span>'
+      +(extra?'<span class="vv" style="width:56px">'+extra+'</span>':'')+'</div>';
+  };
+  const card=(lb,v,col)=>'<div class="bd-card"><div class="bd-lb">'+esc(lb)+'</div><div class="bd-v" style="color:'+(col||'#eaf4ff')+'">'+v+'</div></div>';
+  const maxNcr=Math.max(1,...d.ncr_trend.map(x=>x.count));
+  const maxPar=Math.max(1,...d.fail_pareto.map(x=>x.count));
+  root.className='bd-wrap';
+  root.innerHTML=
+    '<div class="sc-head"><div class="sc-title">📺 全厂质量数据大屏（管理层）</div>'
+    +'<div class="sc-time">更新于 '+esc(d.updated_at)+'　·　30 秒自动刷新　·　'
+    +'<select onchange="BOARD_DAYS=this.value;loadBoard()" style="background:#12324d;color:#cfe3f7;border:1px solid #1d3b57;border-radius:6px;padding:2px 6px;font-size:12px">'
+    +[7,30,90].map(v=>'<option value="'+v+'"'+(Number(BOARD_DAYS)===v?' selected':'')+'>近 '+v+' 天</option>').join('')+'</select></div></div>'
+    +'<div class="bd-grid">'
+    +'<div class="bd-c4">'+card('本月检验单',k.month_tests,'#4fc3f7')+'</div>'
+    +'<div class="bd-c4">'+card('本月合格率',k.month_rate==null?'—':k.month_rate+'%',(k.month_rate!=null&&k.month_rate<95)?'#ffab91':'#69f0ae')+'</div>'
+    +'<div class="bd-c4">'+card('区间综合合格率',k.range_rate==null?'—':k.range_rate+'%',(k.range_rate!=null&&k.range_rate<95)?'#ffab91':'#69f0ae')+'</div>'
+    +'<div class="bd-c4">'+card('来料 / 过程 / 成品合格率',
+        [(k.iqc.rate==null?'—':k.iqc.rate+'%'),(k.ipqc.rate==null?'—':k.ipqc.rate+'%'),(k.oqc.rate==null?'—':k.oqc.rate+'%')].join(' / '),'#cfe3f7')+'</div>'
+    +'<div class="bd-c4">'+card('不合格单 NCR',k.ncr+' 单 / 待处理 '+k.ncr_open,k.ncr_open?'#ffab91':'#69f0ae')+'</div>'
+    +'<div class="bd-c4">'+card('成品交付',k.coa+' 份 COA · 合格批 '+k.fg_ok,k.frozen?'#ffab91':'#69f0ae')+'</div>'
+    // 供应商质量排名
+    +'<div class="bd-card bd-c6"><div class="bd-ph">🏆 供应商来料合格率排名（近 '+d.days+' 天）</div>'
+      +(d.supplier_rates.length?d.supplier_rates.map(x=>bar(x.supplier,x.rate,x.lots+' 批')).join('')
+        :'<div style="color:#7f9ab3;font-size:13px;padding:10px">区间内无来料批次</div>')+'</div>'
+    // 工序合格率
+    +'<div class="bd-card bd-c6"><div class="bd-ph">⚙️ 各工序过程合格率</div>'
+      +(d.station_rates.length?d.station_rates.map(x=>bar(x.station,x.rate,x.tests+' 单')).join('')
+        :'<div style="color:#7f9ab3;font-size:13px;padding:10px">暂无过程检验数据</div>')+'</div>'
+    // NCR 趋势
+    +'<div class="bd-card bd-c8"><div class="bd-ph">📉 不合格单(NCR) 趋势</div>'
+      +(d.ncr_trend.length?'<svg viewBox="0 0 560 150" style="width:100%;height:auto">'
+        +d.ncr_trend.map((x,i)=>{
+            const bw=560/Math.max(d.ncr_trend.length,1)*0.6, x0=560/Math.max(d.ncr_trend.length,1)*i+8;
+            const h=110*x.count/maxNcr, y=125-h;
+            return '<rect x="'+x0+'" y="'+y+'" width="'+bw+'" height="'+h+'" fill="#4fc3f7" rx="2"/>'
+              +'<text x="'+(x0+bw/2)+'" y="'+(y-4)+'" font-size="10" fill="#8fb0cc" text-anchor="middle">'+x.count+'</text>'
+              +'<text x="'+(x0+bw/2)+'" y="140" font-size="9.5" fill="#61798f" text-anchor="middle">'+esc(x.date)+'</text>';
+          }).join('')+'</svg>'
+        :'<div style="color:#69f0ae;font-size:13px;padding:14px">区间内没有不合格单 🎉</div>')+'</div>'
+    // 不合格原因
+    +'<div class="bd-card bd-c4"><div class="bd-ph">🎯 不合格原因 TOP</div>'
+      +(d.fail_pareto.length?d.fail_pareto.map(x=>
+          '<div class="bd-bar"><span class="nm" title="'+esc(x.name)+'">'+esc(x.name)+'</span>'
+          +'<span class="tr"><span class="fl" style="width:'+(100*x.count/maxPar)+'%;background:#ff8a80"></span></span>'
+          +'<span class="vv">'+x.count+' 次</span></div>').join('')
+        :'<div style="color:#7f9ab3;font-size:13px;padding:10px">无</div>')+'</div>'
+    // SPC 预警
+    +'<div class="bd-card bd-c12"><div class="bd-ph">⚠️ SPC 失控预警汇总（超控制限，需关注）'
+      +' <span style="color:'+(d.spc_alarm.count?'#ff8a80':'#69f0ae')+'">'+d.spc_alarm.count+' 项</span></div>'
+      +(d.spc_alarm.count?d.spc_alarm.items.map(x=>
+          '<div class="bd-bar"><span class="nm" title="'+esc(x.scope)+'">'+esc(x.scope)+'</span>'
+          +'<span style="flex:1;color:#cfe3f7">'+esc(x.indicator)+'　'+esc(x.side)+' '+x.latest+'（'+x.out+' 个点越限）</span></div>').join('')
+        :'<div style="color:#69f0ae;font-size:13px">✔ 所有受控指标均正常</div>')+'</div>'
+    +'</div>';
+}
 /* ═══════════ 启动 ═══════════ */
 if(!autoLogin())showLogin();
 </script>
