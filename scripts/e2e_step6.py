@@ -205,7 +205,8 @@ print("══ 7. 操作工角色权限最小化 ══")
 wk = login(U_WK, "Test123456")
 if wk.get("token"):
     menus = sorted(m["key"] for m in wk.get("menus", []))
-    check("操作工只见 2 个页面", menus == ["dashboard", "prodlot"], str(menus))
+    check("操作工只见 4 个页面（车间业务）", menus == ["dashboard", "prodlot", "screen", "trace"],
+          str(menus))
     check("操作工不能建生产批",
           call("POST", "/api/production-lots", {"station_id": 1, "parent_lot_no": "x", "qty": 1},
                token=wk["token"]).get("_err") == 403)

@@ -160,7 +160,7 @@ call("POST", "/api/admin/users",
       "dept_id": ndep["id"], "position_id": op["id"], "role_key": "worker"}, token=AT)
 lg5 = login(u2)
 check("★ 部门未配职责时用通用职务兜底", lg5["user"]["perm_source"] == "duty"
-      and sorted(m["key"] for m in lg5["menus"]) == ["dashboard", "prodlot"],
+      and sorted(m["key"] for m in lg5["menus"]) == ["dashboard", "prodlot", "screen", "trace"],
       str(sorted(m["key"] for m in lg5["menus"])))
 check("兜底≠上面新配的（说明走的是通用模板）",
       sorted(m["key"] for m in lg5["menus"]) != ["dashboard", "prodlot", "screen"])
