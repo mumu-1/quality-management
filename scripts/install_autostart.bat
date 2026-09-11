@@ -22,18 +22,18 @@ if not exist "%ROOT%\main.py" (
 )
 
 echo [1/2] 安装"系统自启"…
-> "%STARTUP%\QMS系统.bat" echo @echo off
->>"%STARTUP%\QMS系统.bat" echo chcp 65001 ^>nul
->>"%STARTUP%\QMS系统.bat" echo cd /d "%ROOT%"
->>"%STARTUP%\QMS系统.bat" echo start "" /min python main.py
-echo     已创建：%STARTUP%\QMS系统.bat
+> "%STARTUP%\QMS-Start-System.bat" echo @echo off
+>>"%STARTUP%\QMS-Start-System.bat" echo chcp 65001 ^>nul
+>>"%STARTUP%\QMS-Start-System.bat" echo cd /d "%ROOT%"
+>>"%STARTUP%\QMS-Start-System.bat" echo start "" /min python main.py
+echo     已创建：%STARTUP%\QMS-Start-System.bat
 
 echo [2/2] 安装"外网隧道自启"…
-> "%STARTUP%\QMS外网隧道.bat" echo @echo off
->>"%STARTUP%\QMS外网隧道.bat" echo chcp 65001 ^>nul
->>"%STARTUP%\QMS外网隧道.bat" echo cd /d "%ROOT%"
->>"%STARTUP%\QMS外网隧道.bat" echo start "" /min python scripts\tunnel_autostart.py
-echo     已创建：%STARTUP%\QMS外网隧道.bat
+> "%STARTUP%\QMS-Start-Tunnel.bat" echo @echo off
+>>"%STARTUP%\QMS-Start-Tunnel.bat" echo chcp 65001 ^>nul
+>>"%STARTUP%\QMS-Start-Tunnel.bat" echo cd /d "%ROOT%"
+>>"%STARTUP%\QMS-Start-Tunnel.bat" echo start "" /min python scripts\tunnel_autostart.py
+echo     已创建：%STARTUP%\QMS-Start-Tunnel.bat
 
 echo.
 echo [OK] 安装完成。下次开机登录后会自动启动。
