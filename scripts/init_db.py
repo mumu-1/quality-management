@@ -764,7 +764,7 @@ _DUTIES = [
      ["prodlot"]),
     ("DEPT-PR", "POS-PL", ["dashboard", "screen", "prodlot", "qcstandard", "trace",
                            "workshop", "station", "equipment", "team"], ["prodlot"]),
-    ("DEPT-PR", "POS-OP", ["dashboard", "prodlot"], []),
+    ("DEPT-PR", "POS-OP", ["dashboard", "prodlot", "trace", "screen"], []),
     ("DEPT-PU", "POS-PU-MGR", ["dashboard", "incoming", "ncr", "trace", "complaint", "material",
                                "supplier", "customer"], ["supplier", "incoming", "ncr"]),
     ("DEPT-PU", "POS-BUYER", ["dashboard", "incoming", "ncr", "trace", "complaint", "material",
@@ -779,7 +779,7 @@ _DUTIES = [
                               "trace"], []),
     ("DEPT-TC", "POS-TECH", ["dashboard", "qcstandard", "trace", "report", "material",
                              "station", "equipment"], ["qcstandard"]),
-    (None, "POS-OP", ["dashboard", "prodlot"], []),
+    (None, "POS-OP", ["dashboard", "prodlot", "trace", "screen"], []),
     (None, "POS-QC", _QC_LINE, []),
 ]
 
@@ -790,6 +790,7 @@ _USER_DUTY = {
     "qc2": ("DEPT-QC", "POS-QC"), "sampler": ("DEPT-QC", "POS-SAMPLER"),
     "prodlead": ("DEPT-PR", "POS-PL"), "prodlead2": ("DEPT-PR", "POS-PL"),
     "buyer": ("DEPT-PU", "POS-BUYER"), "store": ("DEPT-WH", "POS-KEEPER"),
+    "worker": ("DEPT-PR", "POS-OP"),
 }
 
 
@@ -1010,7 +1011,7 @@ def seed():
             Customer(code="CUS-002", name="XX电池材料有限公司", contact="周工", phone="0512-2222xxxx", remark="工业级磷酸铁"),
         ])
 
-        # ═══ 账号（10 个演示账号，密码统一 123456，对应角色矩阵）═══
+        # ═══ 账号（11 个演示账号，密码统一 123456，对应角色矩阵）═══
         acc_defs = [
             # (username, 姓名, 部门, 角色, 工序, 说明)
             ("admin", "系统管理员", "信息部", "admin", None),
@@ -1023,6 +1024,7 @@ def seed():
             ("store", "周仓管", "仓储部", "store", None),
             ("qc2", "王化验", "质量部", "qc", "ST06"),
             ("prodlead2", "孙班长", "原料车间", "prodlead", "ST01"),
+            ("worker", "周操作", "生产部", "worker", "ST03"),
         ]
         for uname, rname, dept, role, stc in acc_defs:
             salt, h = _hash("123456")
@@ -1034,7 +1036,7 @@ def seed():
         seed_user_stations(db)
 
         db.commit()
-        print("✔ 建库完成: 车间%d 工序%d 设备%d 班组3 物料%d 供应商4 客户2 账号%d"
+        print("✔ 建库完成: 车间%d 工序%d 设备%d 班组3 物料%d 供应商4 客户2 账号%d(含操作工)"
               % (len(ws), len(stations), len(eq_defs), len(mat_defs), len(acc_defs)))
         print("  演示账号: admin/qm/qc/sampler/prodlead/buyer/store/qc2/prodlead2/boss, 密码均 123456")
         print("  数据文件: qms.db")

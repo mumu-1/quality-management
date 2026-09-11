@@ -345,9 +345,13 @@ function openPage(key){
 /* ═══════════ 工作台总览 ═══════════ */
 async function renderDashboard(){
   const c=document.getElementById('content');
-  c.innerHTML='<div class="page-title">质量总览</div><div class="page-desc">基础资料就绪情况（第1步）——后续步骤将在这里展示来料/过程/成品的质量看板</div>'
+  c.innerHTML='<div class="page-title">📋 我的工作台</div>'
+    +'<div class="page-desc">只显示与你岗位相关的业务与待办；点卡片直达处理页面</div>'
+    +'<div id="wb-box"></div>'
+    +'<div class="page-title" style="font-size:15px;margin-top:6px">基础资料就绪情况</div>'
     +'<div id="ov-cards" class="stat-grid"></div>'
     +'<div class="panel"><div style="font-size:13px;color:#5a7188;line-height:2">🚧 第1步已完成：账号权限 + 基础资料 + Excel导入。<br>⏭ 下一步（第2步）：检验标准库——给"物料×工序"配检验项目与限值。<br>👈 请从左侧菜单进入各管理页面体验。</div></div>';
+  fillWorkbench();
   const ov=await api('/api/overview');
   const cards=[
     ['📦','物料',ov.material,'blue'],['🚚','供应商',ov.supplier,'blue'],
@@ -1963,7 +1967,13 @@ const MTB=[['dashboard','📊','总览'],['incoming','🚚','来料'],['prodlot'
 function renderMobileTabs(){
   document.querySelectorAll('.mobile-tabbar').forEach(x=>x.remove());
   if(!isMobile())return;
-  const items=MTB.filter(x=>x[0]==='__more'||hasPage(x[0]));
+  if(window.__wb===undefined && !window.__wbLoading){
+    window.__wbLoading=true;
+    loadWorkbench(true).then(()=>{window.__wbLoading=false;renderMobileTabs()});
+  }
+  const src=(window.__wb&&window.__wb.tabs&&window.__wb.tabs.length)
+    ?window.__wb.tabs:MTB.map(x=>[x[0],x[1],x[2]]);
+  const items=src.filter(x=>x[0]==='__more'||hasPage(x[0]));
   if(items.length<3)return;
   const bar=document.createElement('div');bar.className='mobile-tabbar';
   bar.innerHTML=items.map(([k,ic,lb])=>'<button class="mtb" data-t="'+k+'" onclick="'+(k==='__more'?'toggleDrawer(true)':'openPage(\''+k+'\')')+'"><span class="mi">'+ic+'</span>'+lb+'</button>').join('');
@@ -2376,6 +2386,47 @@ async function loadAudit(fillOpts){
     +'<td><span class="tag tag-blue">'+esc(ACT_NAMES[r.action]||r.action)+'</span></td>'
     +'<td style="font-size:12.5px">'+esc(r.target)+'</td>'
     +'<td style="font-size:12.5px;color:var(--text-sub)">'+esc(r.detail)+'</td></tr>').join('');
+}
+
+
+/* ═══════════ 我的工作台（按角色划分业务，第六批）═══════════ */
+function wbCss(){
+  if(document.getElementById('wb-css'))return;
+  const st=document.createElement('style');st.id='wb-css';
+  st.textContent='.wb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}'
+   +'.wb-card{background:#fff;border:1px solid #e3ecf6;border-radius:10px;padding:12px;cursor:pointer;transition:.15s}'
+   +'.wb-card:hover{border-color:#9cc4ee;box-shadow:0 2px 10px rgba(60,120,200,.12);transform:translateY(-1px)}'
+   +'.wb-n{font-size:24px;font-weight:700;color:var(--pri,#2b6cb0);line-height:1.1}'
+   +'.wb-t{font-size:13px;font-weight:600;margin-top:2px;color:#2b3b52}'
+   +'.wb-h{font-size:11px;color:var(--text-sub,#8595a8);margin-top:4px}'
+   +'.wb-empty{border-style:dashed;cursor:default}'
+   +'.wb-empty:hover{transform:none;box-shadow:none;border-color:#e3ecf6}'
+   +'@media (max-width:840px){.wb-grid{grid-template-columns:repeat(2,1fr);gap:8px}.wb-card{padding:10px}.wb-n{font-size:20px}}';
+  document.head.appendChild(st);
+}
+async function loadWorkbench(force){
+  if(window.__wb!==undefined && !force)return window.__wb;
+  try{window.__wb=await api('/api/workbench')}catch(e){window.__wb=null}
+  return window.__wb;
+}
+async function fillWorkbench(){
+  const box=document.getElementById('wb-box');if(!box)return;
+  wbCss();
+  const wb=await loadWorkbench(true);
+  if(!wb){box.innerHTML='<div class="panel" style="font-size:12.5px;color:var(--text-sub)">工作台数据暂不可用</div>';return}
+  const info='<div style="font-size:12.5px;color:var(--text-sub);margin:2px 0 10px">'
+   +'<b>'+esc(wb.real_name)+'</b> · '+esc(wb.dept_name||'—')+(wb.position_name?(' · '+esc(wb.position_name)):'')
+   +'　<span class="tag tag-blue">'+esc(wb.role_name)+'</span>'
+   +(wb.stations&&wb.stations.length?'<br>负责工序：'+wb.stations.map(x=>esc(x)).join('、'):'')
+   +(wb.total_open?('　待办合计 <b>'+wb.total_open+'</b> 项'):'')+'</div>';
+  const cards=(wb.todos||[]).map(t=>'<div class="wb-card" onclick="openPage(\''+t.page+'\')">'
+   +'<div class="wb-n">'+t.count+'</div><div class="wb-t">'+t.icon+' '+esc(t.name)+'</div>'
+   +(t.hint?'<div class="wb-h">'+esc(t.hint)+'</div>':'')+'</div>').join('');
+  const quick=(wb.quick||[]).map(q=>'<button class="btn btn-o btn-sm" style="margin:0 6px 6px 0" '
+   +'onclick="openPage(\''+q.page+'\')" title="'+esc(q.hint||'')+'">'+q.icon+' '+esc(q.name)+'</button>').join('');
+  box.innerHTML=info
+   +'<div class="wb-grid">'+(cards||'<div class="wb-card wb-empty"><div class="wb-t">✅ 暂无待处理事项</div><div class="wb-h">有新的检验/不合格/客诉会出现在这里</div></div>')+'</div>'
+   +(quick?'<div class="panel" style="margin-top:10px"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px">🚀 我的常用业务（按岗位）</div>'+quick+'</div>':'');
 }
 
 /* ═══════════ 启动 ═══════════ */

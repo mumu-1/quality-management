@@ -75,7 +75,7 @@ ROLE_PAGES = {
     "prodlead":  ["dashboard", "screen", "prodlot", "trace", "qcstandard", "workshop", "station", "equipment", "team"],
     "buyer":     ["dashboard", "incoming", "ncr", "trace", "complaint", "material", "supplier", "customer"],
     "store":     ["dashboard", "incoming", "ncr", "trace", "material", "customer", "workshop"],
-    "worker":    ["dashboard", "prodlot"],
+    "worker":    ["dashboard", "prodlot", "trace", "screen"],
 }
 # 角色 → 可管理(增删改)的页面 key；不在列表 = 只读/仅查看
 ROLE_MANAGE = {
@@ -2941,6 +2941,151 @@ def admin_reset_pwd(uid: int, body: PwdIn, token: str = Header(""), db: Session 
 
 
 # ═══════════════════════ 总览统计 ═══════════════════════
+# ═══════════════════════ 我的工作台（按角色划分业务，第六批）═══════════════════════
+# 角色 → 手机底部 Tab（按业务顺序；前端会与本人实际页面权限求交集，缺页自动剔除）
+ROLE_TABS = {
+    "worker":   [("dashboard", "📋", "工作台"), ("prodlot", "🏭", "生产"), ("trace", "🔍", "追溯"),
+                 ("screen", "🖥️", "车间")],
+    "prodlead": [("dashboard", "📋", "工作台"), ("prodlot", "🏭", "生产"), ("trace", "🔍", "追溯"),
+                 ("screen", "🖥️", "车间")],
+    "qc":       [("dashboard", "📋", "工作台"), ("incoming", "🚚", "来料"), ("prodlot", "🏭", "生产"),
+                 ("trace", "🔍", "追溯")],
+    "sampler":  [("dashboard", "📋", "工作台"), ("incoming", "🚚", "来料"), ("material", "📦", "物料")],
+    "qm":       [("dashboard", "📋", "工作台"), ("board", "📺", "大屏"), ("prodlot", "🏭", "生产"),
+                 ("ncr", "⚠️", "不合格")],
+    "boss":     [("dashboard", "📋", "工作台"), ("board", "📺", "大屏"), ("report", "📈", "报表"),
+                 ("ncr", "⚠️", "不合格")],
+    "admin":    [("dashboard", "📋", "工作台"), ("board", "📺", "大屏"), ("prodlot", "🏭", "生产"),
+                 ("ncr", "⚠️", "不合格")],
+    "buyer":    [("dashboard", "📋", "工作台"), ("incoming", "🚚", "来料"), ("ncr", "⚠️", "不合格"),
+                 ("complaint", "📣", "客诉")],
+    "store":    [("dashboard", "📋", "工作台"), ("incoming", "🚚", "来料"), ("trace", "🔍", "追溯"),
+                 ("material", "📦", "物料")],
+}
+DEFAULT_TABS = [("dashboard", "📊", "总览"), ("incoming", "🚚", "来料"), ("prodlot", "🏭", "生产"),
+                ("trace", "🔍", "追溯")]
+
+# 角色 → 快捷业务入口（点一下直达；同样按本人权限过滤）
+ROLE_QUICK = {
+    "worker":   [("prodlot", "🏭", "录车间自检", "找批次→过程检验→上半块"),
+                 ("trace", "🔍", "查我干的批", "看批次状态/判定")],
+    "prodlead": [("prodlot", "🏭", "完工建批", "选工序/设备/班组/父批"),
+                 ("prodlot", "🖐", "录车间自检", "温度/时间/外观/净含量"),
+                 ("screen", "🖥️", "车间大屏", "现场看板"),
+                 ("trace", "🔍", "批次追溯", "一键还原来龙去脉")],
+    "qc":       [("incoming", "🚚", "来料检验", "取样→录数→判定"),
+                 ("prodlot", "🔬", "质检部录入", "含量/杂质/电导率/磁性异物"),
+                 ("trace", "🔍", "批次追溯", "查全过程数据"),
+                 ("complaint", "📣", "客诉登记", "客户投诉")],
+    "sampler":  [("incoming", "🚚", "取样送检", "到货登记后取样"),
+                 ("material", "📦", "查物料", "")],
+    "qm":       [("ncr", "⚠️", "不合格处置", "让步接收/报废审批"),
+                 ("complaint", "📣", "客诉处置", "原因/措施/回复→关闭"),
+                 ("report", "📈", "统计报表", "合格率/柏拉图/SPC"),
+                 ("board", "📺", "数据大屏", "全厂质量总览")],
+    "boss":     [("board", "📺", "数据大屏", "全厂 KPI"),
+                 ("report", "📈", "统计报表", "合格率趋势"),
+                 ("complaint", "📣", "客户投诉", "未闭环情况")],
+    "admin":    [("user", "👤", "账号管理", "建号/改密/停用"),
+                 ("duty", "🔐", "岗位职责", "部门+职务→模块权限"),
+                 ("audit", "📜", "操作日志", "谁改了什么"),
+                 ("board", "📺", "数据大屏", "")],
+    "buyer":    [("incoming", "🚚", "到货登记", "来料登记"),
+                 ("ncr", "⚠️", "不合格处置", "拒收/退货"),
+                 ("complaint", "📣", "客诉登记", "客户端反馈"),
+                 ("supplier", "🚚", "供应商档案", "")],
+    "store":    [("prodlot", "🏭", "批次放行状态", "只收放行合格批"),
+                 ("trace", "🔍", "批次追溯", "查来源与去向"),
+                 ("incoming", "🚚", "原料放行情况", "")],
+}
+ROLE_NAMES_CN = {"admin": "系统管理员", "boss": "厂长/总经办", "qm": "质量经理", "qc": "检验员",
+                 "sampler": "取样员", "prodlead": "班组长", "worker": "操作工",
+                 "buyer": "采购", "store": "仓储"}
+
+
+@app.get("/api/workbench")
+def workbench(token: str = Header(""), db: Session = Depends(get_db)):
+    """我的工作台：按角色/职责给出"我该处理的"待办 + 手机底部 Tab + 快捷业务
+    数据全部来自真实库；不同角色看到的业务范围不同（管理岗可见全部）。"""
+    u = require_user(token, db)
+    role = u.role_key or "worker"
+    pages = set(user_pages(u))
+    my_st = set(get_user_stations(db, u.id) or ([u.station_id] if u.station_id else []))
+    see_all = role in ("admin", "qm", "boss")
+
+    def cnt(q):
+        return q.count()
+
+    rows = []
+    # ── 来料环节 ──
+    n_sample = cnt(db.query(M.IncomingLot).filter(M.IncomingLot.status == 0))
+    n_iqc = cnt(db.query(M.IncomingLot).filter(M.IncomingLot.status == 1))
+    # ── 生产/检验环节 ──
+    q_ipqc = db.query(M.ProductionLot).filter(M.ProductionLot.status == 1)
+    q_self = q_ipqc
+    if my_st and role in ("prodlead", "worker"):
+        q_self = q_ipqc.filter(M.ProductionLot.station_id.in_(list(my_st)))
+    n_self = cnt(q_self)
+    n_ipqc = cnt(q_ipqc)
+    n_pending = cnt(db.query(M.ProductionLot).filter(M.ProductionLot.pending_dept == 1))
+    n_oqc = cnt(db.query(M.ProductionLot).filter(M.ProductionLot.status == 4))
+    n_released = cnt(db.query(M.ProductionLot).filter(M.ProductionLot.status == 5))
+    # ── 不合格 / 客诉 ──
+    n_ncr = cnt(db.query(M.Ncr).filter(M.Ncr.status == 0))
+    n_cp = cnt(db.query(M.Complaint).filter(M.Complaint.status.in_([0, 1])))
+    n_ncr_open_shop = cnt(db.query(M.Ncr).filter(M.Ncr.status == 0))
+    n_screen_frozen = cnt(db.query(M.ProductionLot).filter(M.ProductionLot.status.in_([3, 6])))
+
+    def add(key, name, count, page, icon, who, hint=""):
+        if role in who or see_all:
+            rows.append({"key": key, "name": name, "count": count, "page": page,
+                         "icon": icon, "hint": hint})
+
+    add("sample", "待取样（来料）", n_sample, "incoming", "🧪",
+        ("sampler", "qc", "buyer"), "到货后取样送检")
+    add("iqc", "待来料检验", n_iqc, "incoming", "🚚",
+        ("sampler", "qc", "buyer"), "录数自动判定，不合格通知采购")
+    add("self", "待车间自检", n_self, "prodlot", "🖐",
+        ("prodlead", "worker"), "现场可测项：温度/时间/外观/净含量")
+    add("dept", "待质检部检测", n_ipqc, "prodlot", "🔬",
+        ("qc", "sampler"), "含量/杂质/电导率/磁性异物")
+    add("pending", "⏳ 待质检确认（已放行）", n_pending, "prodlot", "⏳",
+        ("qc",), "自检已过、关键项未出结果，尽快补")
+    add("oqc", "待成品检验", n_oqc, "prodlot", "🏅",
+        ("qc",), "合格后自动出 COA")
+    add("ncr", "待处置不合格", n_ncr, "ncr", "⚠️",
+        ("buyer", "qc"), "拒收退货 / 让步接收 / 报废")
+    add("complaint", "待处理客诉", n_cp, "complaint", "📣",
+        ("qc", "buyer"), "8D 闭环：原因→措施→回复→关闭")
+    add("released", "已放行成品（可发货）", n_released, "prodlot", "✅",
+        ("store",), "仓储只放行合格批")
+    add("frozen", "冻结批次（需关注）", n_screen_frozen, "prodlot", "🚫",
+        ("prodlead", "worker", "store"), "")
+
+    # 手机底部 Tab：按角色业务顺序，取与本人页面权限的交集
+    tabs = [list(t) for t in ROLE_TABS.get(role, DEFAULT_TABS) if t[0] in pages]
+    if len(tabs) < 3:
+        tabs = [list(t) for t in DEFAULT_TABS if t[0] in pages]
+    if not tabs:                                  # 兜底：至少有工作台
+        tabs = [["dashboard", "📊", "总览"]] if "dashboard" in pages else []
+    tabs.append(["__more", "☰", "更多"])
+
+    quick = [{"page": pg, "icon": ic, "name": nm, "hint": ht}
+             for pg, ic, nm, ht in ROLE_QUICK.get(role, []) if pg in pages]
+
+    dep = db.get(M.Department, u.dept_id) if u.dept_id else None
+    pos = db.get(M.Position, u.position_id) if u.position_id else None
+    sts = [db.get(M.Station, i).name for i in my_st if db.get(M.Station, i)]
+    return {"role": role, "role_name": ROLE_NAMES_CN.get(role, role),
+            "real_name": u.real_name or u.username,
+            "dept_name": dep.name if dep else "", "position_name": pos.name if pos else "",
+            "stations": sts,
+            "todos": [r for r in rows if r["count"] > 0] or rows[:3],
+            "todos_all": rows,
+            "total_open": sum(r["count"] for r in rows),
+            "tabs": tabs, "quick": quick}
+
+
 @app.get("/api/overview")
 def overview(token: str = Header(""), db: Session = Depends(get_db)):
     u = require_user(token, db)
